@@ -45,7 +45,7 @@ class CodePrinter {
     final simple = _trySimplePattern(instructions);
     if (simple != null) return simple;
 
-    return _printStackBased(instructions);
+    return _structureIfs(_printStackBased(instructions));
   }
 
   String? _trySimplePattern(List<Instruction> ins) {
@@ -598,6 +598,88 @@ class CodePrinter {
       if (paramTypes[i] == 'long' || paramTypes[i] == 'double') slot++;
     }
     return names;
+  }
+
+  /// 把简单的 `if ... goto label` 伪代码转换成普通的 if 分支。
+  String _structureIfs(String source) {
+    final lines = source.split('\n');
+    final gotoRe = RegExp(r'^        if \((.+)\) goto (label_\d+);$');
+    final labelRe = RegExp(r'^      (label_\d+):$');
+
+    bool changed;
+    do {
+      changed = false;
+      final labelMap = <String, int>{};
+      for (var i = 0; i < lines.length; i++) {
+        final m = labelRe.firstMatch(lines[i]);
+        if (m != null) labelMap[m.group(1)!] = i;
+      }
+
+      for (var i = 0; i < lines.length; i++) {
+        final m = gotoRe.firstMatch(lines[i]);
+        if (m == null) continue;
+        final cond = m.group(1)!;
+        final label = m.group(2)!;
+        final j = labelMap[label];
+        if (j == null || j <= i) continue;
+
+        // 目标标号前必须没有其他标号，避免破坏更复杂的控制流。
+        bool bodyHasLabel = false;
+        for (var k = i + 1; k < j; k++) {
+          if (labelRe.hasMatch(lines[k])) {
+            bodyHasLabel = true;
+            break;
+          }
+        }
+        if (bodyHasLabel) continue;
+
+        // 同一标号不能被其他跳转引用。
+        var otherRefs = false;
+        for (var k = 0; k < lines.length; k++) {
+          if (k == i) continue;
+          if (lines[k].contains('goto $label;')) {
+            otherRefs = true;
+            break;
+          }
+        }
+        if (otherRefs) continue;
+
+        final block = lines.sublist(i + 1, j);
+        final newLines = <String>[
+          '        if (${_negateCondition(cond)}) {',
+          ...block.map((l) => l.isEmpty ? l : '    $l'),
+          '        }',
+        ];
+        lines.replaceRange(i, j + 1, newLines);
+        changed = true;
+        break;
+      }
+    } while (changed);
+
+    return lines.join('\n');
+  }
+
+  String _negateCondition(String cond) {
+    final eq0 = RegExp(r'^(.+) == 0$').firstMatch(cond);
+    if (eq0 != null) return eq0.group(1)!.trim();
+    final ne0 = RegExp(r'^(.+) != 0$').firstMatch(cond);
+    if (ne0 != null) return '!${ne0.group(1)!.trim()}';
+    final cmp = RegExp(r'^(.+?) (==|!=|<=|>=|<|>) (.+)$').firstMatch(cond);
+    if (cmp != null) {
+      final left = cmp.group(1)!.trim();
+      final op = cmp.group(2)!;
+      final right = cmp.group(3)!.trim();
+      final neg = const {
+        '==': '!=',
+        '!=': '==',
+        '<': '>=',
+        '>=': '<',
+        '>': '<=',
+        '<=': '>',
+      }[op]!;
+      return '$left $neg $right';
+    }
+    return '!($cond)';
   }
 
   (String className, String fieldName, String descriptor) _fieldRef(int index) {
