@@ -12,6 +12,28 @@ class _TypedValue {
   _TypedValue(this.expr, {this.type = ''});
 }
 
+class _CountingSink implements StringSink {
+  final StringBuffer _buf;
+  int lineCount;
+  _CountingSink(this._buf) : lineCount = 0;
+
+  @override
+  void write(Object? obj) => _buf.write(obj);
+
+  @override
+  void writeln([Object? obj = '']) {
+    _buf.writeln(obj);
+    lineCount++;
+  }
+
+  @override
+  void writeAll(Iterable objects, [String separator = '']) =>
+      _buf.writeAll(objects, separator);
+
+  @override
+  void writeCharCode(int charCode) => _buf.writeCharCode(charCode);
+}
+
 class CodePrinter {
   final MethodInfo _method;
   final CodeAttribute _code;
@@ -51,7 +73,10 @@ class CodePrinter {
     final simple = _trySimplePattern(instructions);
     if (simple != null) return simple;
 
-    return _structureIfs(_printStackBased(instructions));
+    final (raw, offsetToLine) = _printStackBased(instructions);
+    var text = _structureIfs(raw);
+    text = _structureTryCatch(text, offsetToLine);
+    return text;
   }
 
   String? _trySimplePattern(List<Instruction> ins) {
@@ -158,9 +183,11 @@ class CodePrinter {
         op == Opcodes.return_;
   }
 
-  String _printStackBased(List<Instruction> ins) {
-    final out = StringBuffer();
+  (String, Map<int, int>) _printStackBased(List<Instruction> ins) {
+    final buffer = StringBuffer();
+    final out = _CountingSink(buffer);
     final labels = <int>{};
+    final offsetToLine = <int, int>{};
     for (final i in ins) {
       if (_branchOpcodes.contains(i.opcode) ||
           i.opcode == Opcodes.tableswitch ||
@@ -211,6 +238,7 @@ class CodePrinter {
 
     for (var idx = 0; idx < ins.length; idx++) {
       final i = ins[idx];
+      offsetToLine[i.offset] = out.lineCount;
       if (labels.contains(i.offset)) {
         out.writeln('      label_${i.offset}:');
       }
@@ -605,7 +633,7 @@ class CodePrinter {
           out.writeln('        // ${i.mnemonic} ${i.operands}');
       }
     }
-    return out.toString();
+    return (buffer.toString(), offsetToLine);
   }
 
   Map<int, String> _buildLocalNames(bool isStatic, String descriptor) {
@@ -1375,6 +1403,100 @@ class CodePrinter {
     return '!($cond)';
   }
 
+  /// 根据异常表把 `try { ... } goto end; ... catch ... end:` 还原成 try/catch 块。
+  String _structureTryCatch(String source, Map<int, int> offsetToLine) {
+    final lines = source.split('\n');
+    final gotoRe = RegExp(r'^        goto (label_\d+);$');
+    final labelRe = RegExp(r'^      (label_\d+):$');
+    final exceptionRe =
+        RegExp(r'^        (\S+(?:<[^>]+>)?) (\w+) = /\*exception\*/;$');
+
+    // 从后往前处理，优先处理内层 try/catch。
+    final entries = List<ExceptionTableEntry>.from(_code.exceptionTable)
+      ..sort((a, b) => b.handlerPc.compareTo(a.handlerPc));
+
+    for (final e in entries) {
+      final tryStart = offsetToLine[e.startPc];
+      final tryAfterEnd = offsetToLine[e.endPc];
+      final catchStart = offsetToLine[e.handlerPc];
+      if (tryStart == null || catchStart == null) continue;
+      final searchEnd = tryAfterEnd != null ? tryAfterEnd : lines.length - 1;
+      if (searchEnd < tryStart) continue;
+
+      // 在 try 区域及紧邻的下一条指令里找到跳过后续 catch 的 goto。
+      String? endLabel;
+      int? gotoLine;
+      for (var k = searchEnd; k >= tryStart; k--) {
+        final m = gotoRe.firstMatch(lines[k]);
+        if (m != null) {
+          endLabel = m.group(1);
+          gotoLine = k;
+          break;
+        }
+      }
+      if (endLabel == null || gotoLine == null) continue;
+
+      // 找到 catch 块之后的合并标号。
+      int? labelLine;
+      for (var k = catchStart; k < lines.length; k++) {
+        final m = labelRe.firstMatch(lines[k]);
+        if (m != null && m.group(1) == endLabel) {
+          labelLine = k;
+          break;
+        }
+      }
+      if (labelLine == null) continue;
+
+      final catchEnd = labelLine - 1;
+      if (catchEnd < catchStart) continue;
+
+      // 已经转换过或者不是典型 catch 入口的跳过。
+      if (!lines[catchStart].contains('/*exception*/')) continue;
+
+      final catchTypeName = e.catchType == 0
+          ? 'Throwable'
+          : DescriptorParser.internalToSourceName(
+              _pool.getClassName(e.catchType));
+
+      final tryBody = lines.sublist(tryStart, gotoLine).toList();
+      final catchBody = lines.sublist(catchStart, catchEnd + 1).toList();
+
+      // 处理异常变量：去掉 `Exception p1 = /*exception*/;` 这类行，
+      // 把后续对该变量的引用统一改为 `e`。
+      String catchVar = 'e';
+      if (catchBody.isNotEmpty) {
+        final m = exceptionRe.firstMatch(catchBody[0]);
+        if (m != null) {
+          catchVar = m.group(2)!;
+          catchBody.removeAt(0);
+          if (catchVar != 'e') {
+            final wordRe = RegExp(r'\b' + RegExp.escape(catchVar) + r'\b');
+            for (var i = 0; i < catchBody.length; i++) {
+              catchBody[i] = catchBody[i].replaceAll(wordRe, 'e');
+            }
+          }
+        }
+      }
+
+      String typeName = catchTypeName;
+      if (typeName.startsWith('java.lang.')) {
+        typeName = typeName.substring('java.lang.'.length);
+      }
+
+      String indent(String l) => l.isEmpty ? l : '    $l';
+      final newLines = <String>[
+        '        try {',
+        ...tryBody.map(indent),
+        '        } catch ($typeName e) {',
+        ...catchBody.map(indent),
+        '        }',
+      ];
+      lines.replaceRange(tryStart, labelLine + 1, newLines);
+    }
+
+    return lines.join('\n');
+  }
+
   (String className, String fieldName, String descriptor) _fieldRef(int index) {
     final ref = _pool.getFieldref(index);
     final cls = DescriptorParser.internalToSourceName(
@@ -1452,6 +1574,22 @@ class CodePrinter {
           .join(', ');
       if (op == Opcodes.invokestatic) {
         expr = '${ref.$1}.${ref.$2}($args)';
+      } else if (op == Opcodes.invokespecial && ref.$2 == '<init>') {
+        if (stack.isEmpty) {
+          expr = '/*init underflow*/.<init>($args)';
+        } else {
+          final obj = stack.removeLast();
+          // new Class() / dup / invokespecial <init> 合并成 new Class(args)
+          if (obj.startsWith('new ${ref.$1}(')) {
+            if (stack.isNotEmpty && stack.last == obj) {
+              stack.removeLast(); // 移除 new 留下的占位对象
+            }
+            expr = 'new ${ref.$1}($args)';
+          } else {
+            expr = '$obj.<init>($args)';
+          }
+        }
+        return (expr, true);
       } else if (op == Opcodes.invokespecial) {
         final obj = stack.removeLast();
         expr = '$obj.${ref.$2}($args)';
