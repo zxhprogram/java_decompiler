@@ -125,6 +125,14 @@ class Decompiler {
   void _writeClassDeclaration(StringBuffer sb, String className) {
     final flags = _cf.accessFlags;
     final kind = _classKind(flags);
+    PermittedSubclassesAttribute? permitted;
+    for (final attr in _cf.attributes) {
+      if (attr is PermittedSubclassesAttribute) {
+        permitted = attr;
+        break;
+      }
+    }
+
     final mods = AccessFlagFormatter.classFlags(flags);
     if (flags & AccessFlags.ACC_MODULE != 0) {
       // module-info 特殊处理
@@ -133,6 +141,7 @@ class Decompiler {
     }
     final decl = <String>[];
     if (mods.contains('public')) decl.add('public');
+    if (permitted != null) decl.add('sealed');
     if (mods.contains('final')) decl.add('final');
     if (mods.contains('abstract') &&
         kind != 'interface' &&
@@ -160,6 +169,13 @@ class Decompiler {
               DescriptorParser.internalToSourceName(_pool.getClassName(idx)))
           .join(', ');
       sb.write('$keyword$ifaces');
+    }
+    if (permitted != null) {
+      final names = permitted.classes
+          .map((idx) =>
+              DescriptorParser.internalToSourceName(_pool.getClassName(idx)))
+          .join(', ');
+      sb.write(' permits $names');
     }
   }
 
