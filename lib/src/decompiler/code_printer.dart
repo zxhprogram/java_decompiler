@@ -687,20 +687,15 @@ class CodePrinter {
         DescriptorParser.internalToSourceName(_pool.getClassName(poolIndex));
 
     String invokeReturnType(int opcode, int operand) {
-      int descriptorIndex;
-      if (opcode == Opcodes.invokeinterface) {
-        final ref = _pool.getInterfaceMethodref(operand);
-        descriptorIndex =
-            _pool.getNameAndType(ref.nameAndTypeIndex).descriptorIndex;
-      } else if (opcode == Opcodes.invokedynamic) {
-        final dyn = _pool.getInvokeDynamic(operand);
-        descriptorIndex =
-            _pool.getNameAndType(dyn.nameAndTypeIndex).descriptorIndex;
-      } else {
-        final ref = _pool.getMethodref(operand);
-        descriptorIndex =
-            _pool.getNameAndType(ref.nameAndTypeIndex).descriptorIndex;
-      }
+      final entry = _pool.get(operand);
+      final nameAndTypeIndex = switch (entry) {
+        CpMethodref(:final nameAndTypeIndex) => nameAndTypeIndex,
+        CpInterfaceMethodref(:final nameAndTypeIndex) => nameAndTypeIndex,
+        CpInvokeDynamic(:final nameAndTypeIndex) => nameAndTypeIndex,
+        _ => 0,
+      };
+      final descriptorIndex =
+          _pool.getNameAndType(nameAndTypeIndex).descriptorIndex;
       return DescriptorParser.parseMethodDescriptor(
         _pool.getString(descriptorIndex),
       ).$2;
@@ -1221,23 +1216,16 @@ class CodePrinter {
         case Opcodes.invokestatic:
         case Opcodes.invokeinterface:
         case Opcodes.invokedynamic:
+          final entry = _pool.get(i.operands[0] as int);
+          final nameAndTypeIndex = switch (entry) {
+            CpMethodref(:final nameAndTypeIndex) => nameAndTypeIndex,
+            CpInterfaceMethodref(:final nameAndTypeIndex) => nameAndTypeIndex,
+            CpInvokeDynamic(:final nameAndTypeIndex) => nameAndTypeIndex,
+            _ => 0,
+          };
           final params = DescriptorParser.parseMethodDescriptor(
             _pool.getString(
-              _pool
-                  .getNameAndType(
-                    i.opcode == Opcodes.invokeinterface
-                        ? _pool
-                            .getInterfaceMethodref(i.operands[0] as int)
-                            .nameAndTypeIndex
-                        : i.opcode == Opcodes.invokedynamic
-                            ? _pool
-                                .getInvokeDynamic(i.operands[0] as int)
-                                .nameAndTypeIndex
-                            : _pool
-                                .getMethodref(i.operands[0] as int)
-                                .nameAndTypeIndex,
-                  )
-                  .descriptorIndex,
+              _pool.getNameAndType(nameAndTypeIndex).descriptorIndex,
             ),
           ).$1;
           for (var k = 0; k < params.length; k++) {
