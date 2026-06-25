@@ -296,7 +296,7 @@ class Decompiler {
       final insertAt = firstNewline + 1;
       return result.substring(0, insertAt) + block + result.substring(insertAt);
     }
-    return block.trimLeft() + '\n' + result;
+    return '${block.trimLeft()}\n$result';
   }
 
   Set<String> _collectReferencedClasses() {
@@ -333,7 +333,9 @@ class Decompiler {
     void addMethodDescriptor(String desc) {
       try {
         final (params, ret) = DescriptorParser.parseMethodDescriptor(desc);
-        for (final p in params) addType(p);
+        for (final p in params) {
+          addType(p);
+        }
         addType(ret);
       } catch (_) {}
     }
@@ -362,7 +364,9 @@ class Decompiler {
             addFqcn(DescriptorParser.internalToSourceName(raw));
           }
         case ArrayElementValue(:final values):
-          for (final v in values) collectFromElementValue(v);
+          for (final v in values) {
+            collectFromElementValue(v);
+          }
         case AnnotationElementValue(:final annotationValue):
           addDescriptor(_pool.getString(annotationValue.typeIndex));
           for (final pair in annotationValue.elementValuePairs) {
@@ -386,7 +390,9 @@ class Decompiler {
         } else if (attr is RuntimeInvisibleAnnotationsAttribute) {
           anns = attr.annotations;
         }
-        for (final ann in anns) collectFromAnnotation(ann);
+        for (final ann in anns) {
+          collectFromAnnotation(ann);
+        }
 
         List<List<Annotation>> paramAnns = const [];
         if (attr is RuntimeVisibleParameterAnnotationsAttribute) {
@@ -395,7 +401,9 @@ class Decompiler {
           paramAnns = attr.parameterAnnotations;
         }
         for (final list in paramAnns) {
-          for (final ann in list) collectFromAnnotation(ann);
+          for (final ann in list) {
+            collectFromAnnotation(ann);
+          }
         }
       }
     }
