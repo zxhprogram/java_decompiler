@@ -315,11 +315,12 @@ class Decompiler {
     final desc = _pool.getString(method.descriptorIndex);
     final sigAttr = method.attribute<SignatureAttribute>();
     var (paramTypes, returnType) = DescriptorParser.parseMethodDescriptor(desc);
+    String? typeParams;
     if (sigAttr != null) {
       try {
-        (paramTypes, returnType) = SignatureParser.parseMethodSignature(
-          _pool.getString(sigAttr.signatureIndex),
-        );
+        final sig = _pool.getString(sigAttr.signatureIndex);
+        (paramTypes, returnType) = SignatureParser.parseMethodSignature(sig);
+        typeParams = SignatureParser.parseTypeParameters(sig);
       } catch (_) {
         // 泛型签名解析失败时回退到擦除类型
       }
@@ -330,10 +331,12 @@ class Decompiler {
     final isNative = (method.accessFlags & AccessFlags.ACC_NATIVE) != 0;
     final displayName = rawName == '<init>' ? _simpleName(className) : rawName;
     final displayReturn = rawName == '<init>' ? '' : returnType;
+    final typeParamsPart =
+        (typeParams != null && typeParams.isNotEmpty) ? '$typeParams ' : '';
     final mods = AccessFlagFormatter.methodFlags(method.accessFlags);
     _writeMemberAnnotations(sb, method);
     sb.write(
-        '    ${mods.join(' ')}${mods.isEmpty ? '' : ' '}${displayReturn.isEmpty ? '' : '$displayReturn '}$displayName(');
+        '    ${mods.join(' ')}${mods.isEmpty ? '' : ' '}${displayReturn.isEmpty ? '' : '$displayReturn '}$typeParamsPart$displayName(');
 
     final params = _parameterNames(method, paramTypes.length, isStatic);
     for (var i = 0; i < paramTypes.length; i++) {

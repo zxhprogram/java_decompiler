@@ -210,6 +210,16 @@ class CodePrinter {
 
     final stack = <String>[];
     String pop() => stack.isEmpty ? '/*stack underflow*/' : stack.removeLast();
+    bool isReturnOpcode(int opcode) =>
+        opcode == Opcodes.ireturn ||
+        opcode == Opcodes.lreturn ||
+        opcode == Opcodes.freturn ||
+        opcode == Opcodes.dreturn ||
+        opcode == Opcodes.areturn ||
+        opcode == Opcodes.return_;
+    final offsetToIns = <int, Instruction>{
+      for (final insi in ins) insi.offset: insi
+    };
 
     final isStatic = (_method.accessFlags & AccessFlags.ACC_STATIC) != 0;
     final methodDesc = _pool.getString(_method.descriptorIndex);
@@ -534,7 +544,17 @@ class CodePrinter {
           final a = pop();
           out.writeln('        if ($a <= $b) goto label_${i.operands[0]};');
         case Opcodes.goto_:
-          out.writeln('        goto label_${i.operands[0]};');
+        case Opcodes.goto_w:
+          final target = i.operands[0] as int;
+          final targetIns = offsetToIns[target];
+          if (stack.isNotEmpty &&
+              targetIns != null &&
+              isReturnOpcode(targetIns.opcode)) {
+            out.writeln('        return ${pop()};');
+            stack.clear();
+          } else {
+            out.writeln('        goto label_$target;');
+          }
         case Opcodes.jsr || Opcodes.jsr_w:
           out.writeln('        // jsr ${i.operands[0]}');
         case Opcodes.ret:
@@ -545,8 +565,6 @@ class CodePrinter {
         case Opcodes.ifnonnull:
           out.writeln(
               '        if (${pop()} != null) goto label_${i.operands[0]};');
-        case Opcodes.goto_w:
-          out.writeln('        goto label_${i.operands[0]};');
         case Opcodes.ireturn ||
               Opcodes.lreturn ||
               Opcodes.freturn ||

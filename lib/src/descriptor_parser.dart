@@ -115,10 +115,17 @@ class SignatureParser {
     return SignatureParser(signature)._parseMethodSignature();
   }
 
+  /// 解析方法签名的类型参数部分，返回例如 `<T extends Comparable<T>>`，没有则返回 null。
+  static String? parseTypeParameters(String signature) {
+    final parser = SignatureParser(signature);
+    if (parser._peek() != '<') return null;
+    return parser._parseTypeParameters();
+  }
+
   (List<String>, String) _parseMethodSignature() {
     // 可选的类型参数
     if (_peek() == '<') {
-      _skipTypeParameters();
+      _parseTypeParameters();
     }
     if (_peek() != '(') {
       throw FormatException('Expected "(" in method signature: $_s');
@@ -134,21 +141,40 @@ class SignatureParser {
     return (params, returnType);
   }
 
-  void _skipTypeParameters() {
-    if (_peek() != '<') return;
+  String _parseTypeParameters() {
+    if (_peek() != '<') {
+      throw FormatException('Expected "<" in type parameters: $_s');
+    }
     _pos++; // '<'
+    final params = <String>[];
     while (_peek() != '>') {
-      _parseIdentifier();
-      if (_peek() == ':') {
-        _pos++;
-        _parseFieldTypeSignature(); // class bound
+      final id = _parseIdentifier();
+      if (_peek() != ':') {
+        throw FormatException('Expected ":" after type parameter $id: $_s');
       }
+      _pos++; // ':'
+      final bounds = <String>[];
+      // class bound
+      bounds.add(_parseFieldTypeSignature());
+      // interface bounds
       while (_peek() == ':') {
         _pos++;
-        _parseFieldTypeSignature();
+        bounds.add(_parseFieldTypeSignature());
+      }
+      final boundParts = <String>[];
+      // java.lang.Object 是默认类上界，省略
+      if (bounds.isNotEmpty && bounds.first != 'java.lang.Object') {
+        boundParts.add(bounds.first);
+      }
+      boundParts.addAll(bounds.skip(1));
+      if (boundParts.isEmpty) {
+        params.add(id);
+      } else {
+        params.add('$id extends ${boundParts.join(' & ')}');
       }
     }
     _pos++; // '>'
+    return '<${params.join(', ')}>';
   }
 
   String _parseReturnType() {
