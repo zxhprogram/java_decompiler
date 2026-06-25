@@ -76,6 +76,7 @@ class CodePrinter {
     final (raw, offsetToLine) = _printStackBased(instructions);
     var text = _structureIfs(raw);
     text = _structureTryCatch(text, offsetToLine);
+    text = _structureIfElse(text);
     return text;
   }
 
@@ -225,14 +226,21 @@ class CodePrinter {
       }
     }
 
+    String boolLiteral(String value) {
+      if (value == '0') return 'false';
+      if (value == '1') return 'true';
+      return value;
+    }
+
     void emitStore(int slot, String value, int idx) {
       final name = localNames[slot] ?? 'p$slot';
       final type = storeTypes[idx];
+      final display = type == 'boolean' ? boolLiteral(value) : value;
       if (type != null && type.isNotEmpty && localDeclaredTypes[slot] != type) {
-        out.writeln('        $type $name = $value;');
+        out.writeln('        $type $name = $display;');
         localDeclaredTypes[slot] = type;
       } else {
-        out.writeln('        $name = $value;');
+        out.writeln('        $name = $display;');
       }
     }
 
@@ -1316,6 +1324,32 @@ class CodePrinter {
       }
     }
 
+    // 根据 ifeq/ifne 的用法把相关 int 局部变量推断为 boolean。
+    final booleanSlots = <int>{};
+    for (var idx = 0; idx < ins.length - 1; idx++) {
+      final next = ins[idx + 1];
+      if (next.opcode != Opcodes.ifeq && next.opcode != Opcodes.ifne) continue;
+      final op = ins[idx].opcode;
+      final slot = switch (op) {
+        Opcodes.iload_0 => 0,
+        Opcodes.iload_1 => 1,
+        Opcodes.iload_2 => 2,
+        Opcodes.iload_3 => 3,
+        Opcodes.iload => ins[idx].operands[0] as int,
+        _ => null,
+      };
+      if (slot != null) booleanSlots.add(slot);
+    }
+    for (var idx = 0; idx < ins.length; idx++) {
+      final s = storeSlots[idx];
+      if (s != null && booleanSlots.contains(s)) {
+        final t = storeTypes[idx];
+        if (t == null || t.isEmpty || t == 'int') {
+          storeTypes[idx] = 'boolean';
+        }
+      }
+    }
+
     return (storeTypes, storeSlots);
   }
 
@@ -1493,6 +1527,102 @@ class CodePrinter {
       ];
       lines.replaceRange(tryStart, labelLine + 1, newLines);
     }
+
+    return lines.join('\n');
+  }
+
+  /// 把 `if (cond) goto else; then; goto end; else: else-body; end:` 还原成 if/else。
+  String _structureIfElse(String source) {
+    final lines = source.split('\n');
+    final condGotoRe = RegExp(r'^( {8,})if \((.+)\) goto (label_\d+);$');
+    final gotoRe = RegExp(r'^ {8,}goto (label_\d+);$');
+    final labelRe = RegExp(r'^ {6,}(label_\d+):$');
+
+    bool changed;
+    do {
+      changed = false;
+      final labelMap = <String, int>{};
+      for (var i = 0; i < lines.length; i++) {
+        final m = labelRe.firstMatch(lines[i]);
+        if (m != null) labelMap[m.group(1)!] = i;
+      }
+
+      for (var i = lines.length - 1; i >= 0; i--) {
+        final cm = condGotoRe.firstMatch(lines[i]);
+        if (cm == null) continue;
+        final indent = cm.group(1)!;
+        final cond = cm.group(2)!;
+        final elseLabel = cm.group(3)!;
+        final elseLine = labelMap[elseLabel];
+        if (elseLine == null || elseLine <= i) continue;
+
+        // then 分支结束处必须有一条无条件 goto 跳到 end。
+        int? gotoLine;
+        String? endLabel;
+        for (var g = i + 1; g < elseLine; g++) {
+          final gm = gotoRe.firstMatch(lines[g]);
+          if (gm != null) {
+            gotoLine = g;
+            endLabel = gm.group(1);
+            break;
+          }
+        }
+        if (gotoLine == null || endLabel == null) continue;
+
+        final endLine = labelMap[endLabel];
+        if (endLine == null || endLine <= elseLine) continue;
+
+        // then/else 体内不能有其它的标号，避免破坏更复杂结构。
+        bool bodyHasLabel = false;
+        for (var k = i + 1; k < gotoLine; k++) {
+          if (labelRe.hasMatch(lines[k])) {
+            bodyHasLabel = true;
+            break;
+          }
+        }
+        if (bodyHasLabel) continue;
+        for (var k = elseLine + 1; k < endLine; k++) {
+          if (labelRe.hasMatch(lines[k])) {
+            bodyHasLabel = true;
+            break;
+          }
+        }
+        if (bodyHasLabel) continue;
+
+        // elseLabel 只能被当前条件 goto 引用；endLabel 只能被 then 尾的 goto 引用。
+        var otherRefs = false;
+        for (var k = 0; k < lines.length; k++) {
+          if (k == i) continue;
+          if (lines[k].contains('goto $elseLabel;')) {
+            otherRefs = true;
+            break;
+          }
+        }
+        if (otherRefs) continue;
+        for (var k = 0; k < lines.length; k++) {
+          if (k == gotoLine) continue;
+          if (lines[k].contains('goto $endLabel;')) {
+            otherRefs = true;
+            break;
+          }
+        }
+        if (otherRefs) continue;
+
+        final thenBody = lines.sublist(i + 1, gotoLine);
+        final elseBody = lines.sublist(elseLine + 1, endLine);
+        String bodyIndent(String l) => l.isEmpty ? l : '$indent    $l';
+        final newLines = <String>[
+          '${indent}if (${_negateCondition(cond)}) {',
+          ...thenBody.map(bodyIndent),
+          '${indent}} else {',
+          ...elseBody.map(bodyIndent),
+          '${indent}}',
+        ];
+        lines.replaceRange(i, endLine + 1, newLines);
+        changed = true;
+        break;
+      }
+    } while (changed);
 
     return lines.join('\n');
   }
