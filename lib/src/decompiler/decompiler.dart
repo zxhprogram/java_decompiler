@@ -25,16 +25,31 @@ class Decompiler {
       sb.writeln();
     }
 
+    RecordAttribute? recordAttr;
+    for (final attr in _cf.attributes) {
+      if (attr is RecordAttribute) {
+        recordAttr = attr;
+        break;
+      }
+    }
     _writeClassAnnotations(sb);
-    _writeClassDeclaration(sb, className);
+    if (recordAttr != null) {
+      _writeRecordDeclaration(sb, className, recordAttr);
+    } else {
+      _writeClassDeclaration(sb, className);
+    }
     sb.writeln(' {');
 
-    for (final field in _cf.fields) {
-      _writeField(sb, field);
-    }
-    if (_cf.fields.isNotEmpty && _cf.methods.isNotEmpty) sb.writeln();
-    for (final method in _cf.methods) {
-      _writeMethod(sb, method, className);
+    if (recordAttr != null) {
+      _writeRecordBody(sb, className, recordAttr);
+    } else {
+      for (final field in _cf.fields) {
+        _writeField(sb, field);
+      }
+      if (_cf.fields.isNotEmpty && _cf.methods.isNotEmpty) sb.writeln();
+      for (final method in _cf.methods) {
+        _writeMethod(sb, method, className);
+      }
     }
 
     sb.writeln('}');
@@ -153,6 +168,111 @@ class Decompiler {
     if ((flags & AccessFlags.ACC_INTERFACE) != 0) return 'interface';
     if ((flags & AccessFlags.ACC_ENUM) != 0) return 'enum';
     return 'class';
+  }
+
+  void _writeRecordDeclaration(
+      StringBuffer sb, String className, RecordAttribute recordAttr) {
+    final flags = _cf.accessFlags;
+    final mods = AccessFlagFormatter.classFlags(flags);
+    final decl = <String>[];
+    if (mods.contains('public')) decl.add('public');
+    // record 隐式 final，不需要写出
+    decl.add('record');
+    decl.add(_simpleName(className));
+    sb.write(decl.join(' '));
+
+    sb.write('(');
+    for (var i = 0; i < recordAttr.components.length; i++) {
+      if (i > 0) sb.write(', ');
+      final comp = recordAttr.components[i];
+      final name = _pool.getString(comp.nameIndex);
+      final type = DescriptorParser.parseFieldDescriptor(
+          _pool.getString(comp.descriptorIndex));
+      sb.write('$type $name');
+    }
+    sb.write(')');
+
+    if (_cf.interfaces.isNotEmpty) {
+      final ifaces = _cf.interfaces
+          .map((idx) =>
+              DescriptorParser.internalToSourceName(_pool.getClassName(idx)))
+          .join(', ');
+      sb.write(' implements $ifaces');
+    }
+  }
+
+  void _writeRecordBody(
+      StringBuffer sb, String className, RecordAttribute recordAttr) {
+    final componentNames =
+        recordAttr.components.map((c) => _pool.getString(c.nameIndex)).toList();
+    final componentTypes = recordAttr.components
+        .map((c) => DescriptorParser.parseFieldDescriptor(
+            _pool.getString(c.descriptorIndex)))
+        .toList();
+
+    for (final field in _cf.fields) {
+      final name = _pool.getString(field.nameIndex);
+      // 记录组件生成的 private final 字段不再输出；静态字段保留
+      if ((field.accessFlags & AccessFlags.ACC_STATIC) != 0 ||
+          !componentNames.contains(name)) {
+        _writeField(sb, field);
+      }
+    }
+
+    if (_cf.fields.isNotEmpty && _cf.methods.isNotEmpty) sb.writeln();
+
+    for (final method in _cf.methods) {
+      if (_isRecordGeneratedMethod(method, componentNames, componentTypes)) {
+        continue;
+      }
+      _writeMethod(sb, method, className);
+    }
+  }
+
+  bool _listEquals(List<String> a, List<String> b) {
+    if (a.length != b.length) return false;
+    for (var i = 0; i < a.length; i++) {
+      if (a[i] != b[i]) return false;
+    }
+    return true;
+  }
+
+  bool _isRecordGeneratedMethod(MethodInfo method, List<String> componentNames,
+      List<String> componentTypes) {
+    final rawName = _pool.getString(method.nameIndex);
+    final desc = _pool.getString(method.descriptorIndex);
+    final (paramTypes, returnType) =
+        DescriptorParser.parseMethodDescriptor(desc);
+
+    // 规范构造器
+    if (rawName == '<init>' &&
+        paramTypes.length == componentTypes.length &&
+        _listEquals(paramTypes, componentTypes)) {
+      return true;
+    }
+
+    // 访问器
+    if (paramTypes.isEmpty &&
+        componentNames.contains(rawName) &&
+        componentTypes[componentNames.indexOf(rawName)] == returnType) {
+      return true;
+    }
+
+    // Object 方法
+    if (rawName == 'toString' && paramTypes.isEmpty && returnType == 'String') {
+      return true;
+    }
+    if (rawName == 'hashCode' && paramTypes.isEmpty && returnType == 'int') {
+      return true;
+    }
+    if (rawName == 'equals' &&
+        paramTypes.length == 1 &&
+        paramTypes[0] == 'Object' &&
+        returnType == 'boolean') {
+      return true;
+    }
+
+    return false;
   }
 
   void _writeField(StringBuffer sb, FieldInfo field) {
