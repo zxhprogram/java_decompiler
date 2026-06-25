@@ -35,7 +35,8 @@ class Decompiler {
     }
 
     sb.writeln('}');
-    return sb.toString();
+    final raw = sb.toString();
+    return _addImports(raw, className, package);
   }
 
   String _packageOf(String className) {
@@ -241,5 +242,206 @@ class Decompiler {
       if (names[i].isEmpty) names[i] = 'p$i';
     }
     return names;
+  }
+
+  String _addImports(String source, String thisClassName, String thisPackage) {
+    final refs = _collectReferencedClasses();
+    final imports = <String>[];
+    final replacements = <String, String>{};
+    final usedSimple = <String>{};
+    final thisClassDot = DescriptorParser.internalToSourceName(thisClassName);
+
+    String simpleOf(String fqcn) {
+      final idx = fqcn.lastIndexOf('.');
+      return idx == -1 ? fqcn : fqcn.substring(idx + 1);
+    }
+
+    String packageOf(String fqcn) {
+      final idx = fqcn.lastIndexOf('.');
+      return idx == -1 ? '' : fqcn.substring(0, idx);
+    }
+
+    for (final fqcn in refs) {
+      if (fqcn == thisClassDot) {
+        replacements[fqcn] = simpleOf(fqcn);
+        continue;
+      }
+      final pkg = packageOf(fqcn);
+      final simple = simpleOf(fqcn);
+      if (pkg == thisPackage || pkg == 'java.lang' || pkg.isEmpty) {
+        replacements[fqcn] = simple;
+        continue;
+      }
+      if (!usedSimple.add(simple)) {
+        // 同名类冲突，保留全限定名避免歧义
+        continue;
+      }
+      imports.add(fqcn);
+      replacements[fqcn] = simple;
+    }
+
+    var result = source;
+    final sorted = replacements.entries.toList()
+      ..sort((a, b) => b.key.length.compareTo(a.key.length));
+    for (final e in sorted) {
+      result = result.replaceAll(e.key, e.value);
+    }
+
+    if (imports.isEmpty) return result;
+
+    imports.sort();
+    final block = '\n${imports.map((i) => 'import $i;').join('\n')}\n';
+    if (thisPackage.isNotEmpty) {
+      final firstNewline = result.indexOf('\n');
+      final insertAt = firstNewline + 1;
+      return result.substring(0, insertAt) + block + result.substring(insertAt);
+    }
+    return block.trimLeft() + '\n' + result;
+  }
+
+  Set<String> _collectReferencedClasses() {
+    final refs = <String>{};
+
+    void addFqcn(String? raw) {
+      if (raw == null) return;
+      var fqcn = raw;
+      if (fqcn.startsWith('L') && fqcn.endsWith(';')) {
+        fqcn = fqcn.substring(1, fqcn.length - 1);
+      }
+      if (fqcn.startsWith('[')) return;
+      fqcn = DescriptorParser.internalToSourceName(fqcn);
+      if (_isPrimitiveName(fqcn)) return;
+      if (!fqcn.contains('.')) return;
+      refs.add(fqcn);
+    }
+
+    void addType(String type) {
+      var t = type.trim();
+      while (t.endsWith('[]')) {
+        t = t.substring(0, t.length - 2);
+      }
+      if (_isPrimitiveName(t)) return;
+      if (t.contains('.')) addFqcn(t);
+    }
+
+    void addDescriptor(String desc) {
+      try {
+        addType(DescriptorParser.parseFieldDescriptor(desc));
+      } catch (_) {}
+    }
+
+    void addMethodDescriptor(String desc) {
+      try {
+        final (params, ret) = DescriptorParser.parseMethodDescriptor(desc);
+        for (final p in params) addType(p);
+        addType(ret);
+      } catch (_) {}
+    }
+
+    String? classNameFromIndex(int index) {
+      final entry = _pool.get(index);
+      return switch (entry) {
+        CpClass(:final nameIndex) => _pool.getString(nameIndex),
+        CpUtf8(:final value) => value,
+        _ => null,
+      };
+    }
+
+    void collectFromElementValue(ElementValue value) {
+      switch (value) {
+        case ConstElementValue(:final tag, :final constValueIndex):
+          if (tag == 'c'.codeUnitAt(0)) {
+            final raw = classNameFromIndex(constValueIndex);
+            if (raw != null && !raw.startsWith('[')) {
+              addFqcn(DescriptorParser.internalToSourceName(raw));
+            }
+          }
+        case ClassElementValue(:final classInfoIndex):
+          final raw = classNameFromIndex(classInfoIndex);
+          if (raw != null && !raw.startsWith('[')) {
+            addFqcn(DescriptorParser.internalToSourceName(raw));
+          }
+        case ArrayElementValue(:final values):
+          for (final v in values) collectFromElementValue(v);
+        case AnnotationElementValue(:final annotationValue):
+          addDescriptor(_pool.getString(annotationValue.typeIndex));
+          for (final pair in annotationValue.elementValuePairs) {
+            collectFromElementValue(pair.value);
+          }
+      }
+    }
+
+    void collectFromAnnotation(Annotation ann) {
+      addDescriptor(_pool.getString(ann.typeIndex));
+      for (final pair in ann.elementValuePairs) {
+        collectFromElementValue(pair.value);
+      }
+    }
+
+    void collectFromAttributes(List<AttributeInfo> attrs) {
+      for (final attr in attrs) {
+        List<Annotation> anns = const [];
+        if (attr is RuntimeVisibleAnnotationsAttribute) {
+          anns = attr.annotations;
+        } else if (attr is RuntimeInvisibleAnnotationsAttribute) {
+          anns = attr.annotations;
+        }
+        for (final ann in anns) collectFromAnnotation(ann);
+
+        List<List<Annotation>> paramAnns = const [];
+        if (attr is RuntimeVisibleParameterAnnotationsAttribute) {
+          paramAnns = attr.parameterAnnotations;
+        } else if (attr is RuntimeInvisibleParameterAnnotationsAttribute) {
+          paramAnns = attr.parameterAnnotations;
+        }
+        for (final list in paramAnns) {
+          for (final ann in list) collectFromAnnotation(ann);
+        }
+      }
+    }
+
+    for (var i = 1; i < _pool.length; i++) {
+      final e = _pool.get(i);
+      if (e is CpClass) {
+        final raw = _pool.getString(e.nameIndex);
+        if (!raw.startsWith('[')) {
+          addFqcn(DescriptorParser.internalToSourceName(raw));
+        }
+      }
+    }
+
+    addFqcn(_cf.superClass == 0
+        ? null
+        : DescriptorParser.internalToSourceName(
+            _pool.getClassName(_cf.superClass)));
+    for (final idx in _cf.interfaces) {
+      addFqcn(DescriptorParser.internalToSourceName(_pool.getClassName(idx)));
+    }
+
+    for (final f in _cf.fields) {
+      addDescriptor(_pool.getString(f.descriptorIndex));
+      collectFromAttributes(f.attributes);
+    }
+    for (final m in _cf.methods) {
+      addMethodDescriptor(_pool.getString(m.descriptorIndex));
+      collectFromAttributes(m.attributes);
+    }
+    collectFromAttributes(_cf.attributes);
+
+    return refs;
+  }
+
+  bool _isPrimitiveName(String name) {
+    return const {
+      'void',
+      'boolean',
+      'byte',
+      'char',
+      'short',
+      'int',
+      'long',
+      'float',
+      'double',
+    }.contains(name);
   }
 }
