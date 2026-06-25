@@ -1,5 +1,3 @@
-import 'dart:io';
-
 import '../attributes/attribute_models.dart';
 import '../bytecode/bytecode_decoder.dart';
 import '../bytecode/instructions.dart';
@@ -2121,7 +2119,6 @@ class CodePrinter {
   /// 这只是一个启发式优化，针对 `invokedynamic typeSwitch` 生成的典型字节码。
   String _structurePatternSwitch(String source) {
     final lines = source.split('\n');
-    final hasTypeSwitch = lines.where((l) => l.contains('typeSwitch')).toList();
 
     // 1. 定位 typeSwitch 头部：
     //    Object p1 = p0;
@@ -2147,37 +2144,61 @@ class CodePrinter {
       switchLine = i;
       selectorVar = sm.group(1);
       stateVar = sm.group(2);
-      // 前一行是 label_4:
-      if (i > 0) {
-        final lm = labelRe.firstMatch(lines[i - 1]);
-        if (lm != null) switchLabel = lm.group(1);
-      }
-      if (i >= 3) {
-        // 实际顺序：Object sel = obj; int state = 0; label: switch(...)
-        final hm = headerAssignRe.firstMatch(lines[i - 3]);
-        final im = intInitRe.firstMatch(lines[i - 2]);
-        if (hm != null &&
-            im != null &&
-            im.group(1) == stateVar &&
-            hm.group(2) == selectorVar) {
-          headerStart = i - 3;
-          originalSelector = hm.group(3);
+
+      // 向前搜索状态初始化、选择器赋值以及最近的标签（javac 生成的前导代码不尽相同）
+      int? stateInitLine;
+      for (var j = i - 1; j >= 0 && j >= i - 15; j--) {
+        final line = lines[j];
+        final lm = labelRe.firstMatch(line);
+        if (lm != null) {
+          switchLabel ??= lm.group(1);
+          continue;
+        }
+        if (stateInitLine == null) {
+          final im = intInitRe.firstMatch(line);
+          if (im != null && im.group(1) == stateVar) {
+            stateInitLine = j;
+            continue;
+          }
+        }
+        if (stateInitLine != null) {
+          final hm = headerAssignRe.firstMatch(line);
+          if (hm != null && hm.group(2) == selectorVar) {
+            headerStart = j;
+            originalSelector = hm.group(3);
+            break;
+          }
         }
       }
       break;
     }
 
     if (switchLine == null ||
-        switchLabel == null ||
         selectorVar == null ||
         stateVar == null ||
-        headerStart == null) {
-      stderr.writeln(
-          'DEBUG header not found: sw=$switchLine label=$switchLabel sel=$selectorVar state=$stateVar header=$headerStart has=$hasTypeSwitch');
+        headerStart == null ||
+        originalSelector == null) {
       return source;
     }
-    stderr.writeln(
-        'DEBUG header found: start=$headerStart sel=$selectorVar state=$stateVar');
+
+    // 若 switch 前还有编译器生成的 label 与 Objects.requireNonNull，也一并移除
+    var preludeStart = headerStart;
+    final requireRe = RegExp(r'^(?:java\.util\.)?Objects\.requireNonNull\(' +
+        RegExp.escape(originalSelector) +
+        r'\);$');
+    while (preludeStart > 0) {
+      final prev = lines[preludeStart - 1].trim();
+      if (prev.startsWith('label_') && prev.endsWith(':')) {
+        preludeStart--;
+        continue;
+      }
+      if (requireRe.hasMatch(prev)) {
+        preludeStart--;
+        continue;
+      }
+      break;
+    }
+    headerStart = preludeStart;
     final sel = selectorVar;
     final st = stateVar;
     final swLabel = switchLabel;
@@ -2238,12 +2259,6 @@ class CodePrinter {
       }
     }
 
-    stderr.writeln(
-        'DEBUG blockStarts=$blockStarts defaultStart=$defaultStartLine');
-    for (final idx in blockStarts) {
-      stderr.writeln('DEBUG blockStart $idx: ${lines[idx]}');
-    }
-
     // 找到异常处理块 label_312（默认是 default 后的下一个 label）
     if (defaultStartLine != null) {
       for (var i = defaultStartLine + 1; i < lines.length; i++) {
@@ -2281,11 +2296,7 @@ class CodePrinter {
       if (defaultLine != null) caseLines.add(defaultLine);
     }
 
-    if (caseLines.isEmpty) {
-      stderr.writeln('DEBUG caseLines empty for $originalSelector');
-      return source;
-    }
-    stderr.writeln('DEBUG caseLines: $caseLines');
+    if (caseLines.isEmpty) return source;
 
     // 6. 组装新的 switch 表达式
     final indent = '            ';
@@ -2305,26 +2316,25 @@ class CodePrinter {
     List<String> block,
     String selectorVar,
     String stateVar,
-    String switchLabel, {
+    String? switchLabel, {
     bool isDefault = false,
   }) {
     if (block.isEmpty) return null;
 
-    // 找到结果表达式：块中最后一个 `return expr;`
+    // 找到结果表达式：块中最后一个 `return expr;` 或 `throw expr;`
     String? resultExpr;
     for (var i = block.length - 1; i >= 0; i--) {
-      final m = RegExp(r'^        return (.+);$').firstMatch(block[i]);
+      final m = RegExp(r'^        (return|throw) (.+);$').firstMatch(block[i]);
       if (m != null) {
-        resultExpr = m.group(1);
+        resultExpr = m.group(1) == 'throw' ? 'throw ${m.group(2)}' : m.group(2);
         break;
       }
     }
-    stderr.writeln('DEBUG raw resultExpr case=$caseValue: $resultExpr');
+    if (resultExpr == null) return null;
 
-    if (resultExpr == null) {
-      stderr.writeln('DEBUG resultExpr null case=$caseValue');
-      return null;
-    }
+    resultExpr = resultExpr.replaceAllMapped(
+        RegExp(r'(?:java\.lang\.)?String\.valueOf\(([^)]+)\)'),
+        (m) => m.group(1)!);
 
     // 默认块 / null 块
     if (isDefault) {
@@ -2351,8 +2361,6 @@ class CodePrinter {
       }
     }
     if (patternVar == null || patternType == null || castLine == null) {
-      stderr.writeln(
-          'DEBUG patternVar null case=$caseValue first=${block.firstOrNull}');
       return null;
     }
     final castLineIdx = castLine;
@@ -2388,7 +2396,9 @@ class CodePrinter {
     // 2) 成功返回型：if (cond) goto label_true;  label_true: return expr;
     String? guard;
     final retryIfRe = RegExp(r'^ *if \((.+)\) \{$');
-    for (var i = castLineIdx + 1; i < block.length; i++) {
+    for (var i = castLineIdx + 1;
+        i < block.length && switchLabel != null;
+        i++) {
       final m = retryIfRe.firstMatch(block[i]);
       if (m == null) continue;
       final cond = m.group(1)!;
@@ -2481,8 +2491,6 @@ class CodePrinter {
 
   /// 利用 LocalVariableTable 把生成的 pN 变量名还原成源码中的名字。
   String _restoreVariableNames(String source) {
-    stderr.writeln(
-        'restoreVariableNames called for ${_pool.getString(_method.nameIndex)}');
     LocalVariableTableAttribute? lvt;
     for (final attr in _method.attributes) {
       if (attr is LocalVariableTableAttribute) {
@@ -2490,12 +2498,7 @@ class CodePrinter {
         break;
       }
     }
-    if (lvt == null) {
-      // 临时调试：打印方法名以确认是否有局部变量表
-      stderr.writeln('no LVT for ${_pool.getString(_method.nameIndex)}');
-      return source;
-    }
-    stderr.writeln('has LVT for ${_pool.getString(_method.nameIndex)}');
+    if (lvt == null) return source;
 
     final renames = <int, String>{};
     for (final e in lvt.localVariableTable) {
@@ -2505,8 +2508,6 @@ class CodePrinter {
         renames[e.index] = name;
       }
     }
-    stderr.writeln(
-        'LVT renames for ${_pool.getString(_method.nameIndex)}: $renames');
     if (renames.isEmpty) return source;
 
     final entries = renames.entries.toList()
