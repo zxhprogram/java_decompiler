@@ -1,3 +1,5 @@
+import 'dart:io';
+
 import '../attributes/attribute_models.dart';
 import '../bytecode/bytecode_decoder.dart';
 import '../bytecode/instructions.dart';
@@ -37,9 +39,10 @@ class _CountingSink implements StringSink {
 class CodePrinter {
   final MethodInfo _method;
   final CodeAttribute _code;
-  final ConstantPool _pool;
+  final ClassFile _cf;
+  late final ConstantPool _pool = _cf.constantPool;
 
-  CodePrinter(this._method, this._code, this._pool);
+  CodePrinter(this._method, this._code, this._cf);
 
   static final Set<int> _branchOpcodes = {
     Opcodes.ifeq,
@@ -76,10 +79,20 @@ class CodePrinter {
     final (raw, offsetToLine) = _printStackBased(instructions);
     var text = _structureIfs(raw);
     text = _structureTryCatch(text, offsetToLine);
+    text = _structurePatternSwitch(text);
     text = _structureIfElse(text);
     text = _structureForEach(text);
     text = _structureWhileLoops(text);
+    text = _removeStackUnderflow(text);
+    text = _restoreVariableNames(text);
     return text;
+  }
+
+  String _removeStackUnderflow(String source) {
+    return source
+        .split('\n')
+        .where((line) => line.trim() != 'return /*stack underflow*/;')
+        .join('\n');
   }
 
   String? _trySimplePattern(List<Instruction> ins) {
@@ -1957,6 +1970,43 @@ class CodePrinter {
     }
   }
 
+  /// 把 StringConcatFactory.makeConcatWithConstants 的 recipe 还原成字符串拼接表达式。
+  String _formatStringConcat(String recipe, List<String> args) {
+    final parts = <String>[];
+    final literal = StringBuffer();
+    var argIndex = 0;
+    for (var i = 0; i < recipe.length; i++) {
+      final c = recipe.codeUnitAt(i);
+      if (c == 0x0001 || c == 0x0002) {
+        if (literal.isNotEmpty) {
+          parts.add(_quoteStringLiteral(literal.toString()));
+          literal.clear();
+        }
+        if (argIndex < args.length) {
+          parts.add(args[argIndex++]);
+        }
+      } else {
+        literal.writeCharCode(c);
+      }
+    }
+    if (literal.isNotEmpty) {
+      parts.add(_quoteStringLiteral(literal.toString()));
+    }
+    if (parts.isEmpty) return '""';
+    if (parts.length == 1) return parts.first;
+    return parts.join(' + ');
+  }
+
+  String _quoteStringLiteral(String s) {
+    final escaped = s
+        .replaceAll('\\', '\\\\')
+        .replaceAll('"', '\\"')
+        .replaceAll('\n', '\\n')
+        .replaceAll('\r', '\\r')
+        .replaceAll('\t', '\\t');
+    return '"$escaped"';
+  }
+
   (String expr, bool returns) _invokeFromStack(
       Instruction i, List<String> stack) {
     final op = i.opcode;
@@ -1971,8 +2021,34 @@ class CodePrinter {
       final (params, ret) = DescriptorParser.parseMethodDescriptor(desc);
       final args = List.generate(params.length, (_) => stack.removeLast())
           .reversed
-          .join(', ');
-      expr = 'invokedynamic $name($args)';
+          .toList();
+      if (name == 'makeConcatWithConstants') {
+        BootstrapMethodsAttribute? bmAttr;
+        for (final attr in _cf.attributes) {
+          if (attr is BootstrapMethodsAttribute) {
+            bmAttr = attr;
+            break;
+          }
+        }
+        if (bmAttr != null &&
+            id.bootstrapMethodAttrIndex < bmAttr.bootstrapMethods.length &&
+            bmAttr.bootstrapMethods[id.bootstrapMethodAttrIndex]
+                .bootstrapArguments.isNotEmpty) {
+          try {
+            final recipeIndex = bmAttr
+                .bootstrapMethods[id.bootstrapMethodAttrIndex]
+                .bootstrapArguments[0];
+            final recipe =
+                _pool.getString(_pool.getStringInfo(recipeIndex).stringIndex);
+            expr = _formatStringConcat(recipe, args);
+            returns = ret != 'void';
+            return (expr, returns);
+          } catch (_) {
+            // 解析失败时回退到通用 invokedynamic 表示
+          }
+        }
+      }
+      expr = 'invokedynamic $name(${args.join(', ')})';
       returns = ret != 'void';
     } else {
       final entry = _pool.get(index);
@@ -2039,5 +2115,408 @@ class CodePrinter {
       11 => 'long',
       _ => '?',
     };
+  }
+
+  /// 尝试把 Java 21 的 pattern switch 状态机还原成可读的 switch 表达式。
+  /// 这只是一个启发式优化，针对 `invokedynamic typeSwitch` 生成的典型字节码。
+  String _structurePatternSwitch(String source) {
+    final lines = source.split('\n');
+    final hasTypeSwitch = lines.where((l) => l.contains('typeSwitch')).toList();
+
+    // 1. 定位 typeSwitch 头部：
+    //    Object p1 = p0;
+    //    int p2 = 0;
+    //  label_4:
+    //    switch (invokedynamic typeSwitch(p1, p2)) {
+    final switchRe = RegExp(
+        r'^        switch \(invokedynamic typeSwitch\((\w+), (\w+)\)\) \{$');
+    final labelRe = RegExp(r'^      (label_\d+):$');
+    final intInitRe = RegExp(r'^        int (\w+) = 0;$');
+    final headerAssignRe =
+        RegExp(r'^        (\S+(?:<[^>]+>)?) (\w+) = (\w+);$');
+
+    int? headerStart; // Object p1 = p0; 所在行
+    String? originalSelector;
+    String? selectorVar;
+    String? stateVar;
+    String? switchLabel;
+    int? switchLine;
+    for (var i = 0; i < lines.length; i++) {
+      final sm = switchRe.firstMatch(lines[i]);
+      if (sm == null) continue;
+      switchLine = i;
+      selectorVar = sm.group(1);
+      stateVar = sm.group(2);
+      // 前一行是 label_4:
+      if (i > 0) {
+        final lm = labelRe.firstMatch(lines[i - 1]);
+        if (lm != null) switchLabel = lm.group(1);
+      }
+      if (i >= 3) {
+        // 实际顺序：Object sel = obj; int state = 0; label: switch(...)
+        final hm = headerAssignRe.firstMatch(lines[i - 3]);
+        final im = intInitRe.firstMatch(lines[i - 2]);
+        if (hm != null &&
+            im != null &&
+            im.group(1) == stateVar &&
+            hm.group(2) == selectorVar) {
+          headerStart = i - 3;
+          originalSelector = hm.group(3);
+        }
+      }
+      break;
+    }
+
+    if (switchLine == null ||
+        switchLabel == null ||
+        selectorVar == null ||
+        stateVar == null ||
+        headerStart == null) {
+      stderr.writeln(
+          'DEBUG header not found: sw=$switchLine label=$switchLabel sel=$selectorVar state=$stateVar header=$headerStart has=$hasTypeSwitch');
+      return source;
+    }
+    stderr.writeln(
+        'DEBUG header found: start=$headerStart sel=$selectorVar state=$stateVar');
+    final sel = selectorVar;
+    final st = stateVar;
+    final swLabel = switchLabel;
+
+    // 2. 找到 switch 的右花括号
+    int? switchCloseLine;
+    for (var i = switchLine + 1; i < lines.length; i++) {
+      if (lines[i] == '        }') {
+        switchCloseLine = i;
+        break;
+      }
+    }
+    if (switchCloseLine == null) return source;
+
+    // 3. 解析 case -> label 映射（按 switch 中出现的顺序）
+    final caseRe = RegExp(r'^            case (-?\d+): goto (label_\d+);$');
+    final defaultRe = RegExp(r'^            default: goto (label_\d+);$');
+    final cases = <({int value, String label})>[];
+    String? defaultLabel;
+    for (var i = switchLine + 1; i < switchCloseLine; i++) {
+      final cm = caseRe.firstMatch(lines[i]);
+      if (cm != null) {
+        cases.add((value: int.parse(cm.group(1)!), label: cm.group(2)!));
+        continue;
+      }
+      final dm = defaultRe.firstMatch(lines[i]);
+      if (dm != null) {
+        defaultLabel = dm.group(1);
+      }
+    }
+    if (defaultLabel == null || cases.isEmpty) return source;
+
+    // 4. 把 switch 后的代码切分成每个 case 的处理块
+    // 每个 case 以模式变量声明开头：Type var = ((Type) selector);
+    final blockStartRe = RegExp(r'^        (\S+(?:<[^>]+>)?) \w+ = \(\(');
+    final anyLabelRe = RegExp(r'^      (label_\d+):$');
+
+    bool isNewBlockStart(int idx) {
+      return blockStartRe.hasMatch(lines[idx]);
+    }
+
+    final blockStarts = <int>[switchCloseLine + 1];
+    int? defaultStartLine;
+    int? exceptionStartLine;
+    for (var i = switchCloseLine + 1; i < lines.length; i++) {
+      final line = lines[i];
+      if (line.trim().isEmpty) continue;
+      final lm = anyLabelRe.firstMatch(line);
+      if (lm != null) {
+        final name = lm.group(1)!;
+        if (name == defaultLabel) {
+          defaultStartLine = i;
+          break;
+        }
+      }
+      if (i != switchCloseLine + 1 && isNewBlockStart(i)) {
+        blockStarts.add(i);
+      }
+    }
+
+    stderr.writeln(
+        'DEBUG blockStarts=$blockStarts defaultStart=$defaultStartLine');
+    for (final idx in blockStarts) {
+      stderr.writeln('DEBUG blockStart $idx: ${lines[idx]}');
+    }
+
+    // 找到异常处理块 label_312（默认是 default 后的下一个 label）
+    if (defaultStartLine != null) {
+      for (var i = defaultStartLine + 1; i < lines.length; i++) {
+        if (anyLabelRe.hasMatch(lines[i])) {
+          exceptionStartLine = i;
+          break;
+        }
+      }
+    }
+
+    // 5. 逐个处理块，生成 case 子句
+    final caseLines = <String>[];
+    for (var ci = 0; ci < cases.length; ci++) {
+      final start = blockStarts[ci];
+      final end = (ci + 1 < blockStarts.length)
+          ? blockStarts[ci + 1]
+          : (defaultStartLine ?? lines.length);
+      final block = lines.sublist(start, end);
+      final caseLine = _patternCaseFromBlock(
+        cases[ci].value,
+        block,
+        sel,
+        st,
+        swLabel,
+      );
+      if (caseLine != null) caseLines.add(caseLine);
+    }
+
+    // default 块
+    if (defaultStartLine != null) {
+      final end = exceptionStartLine ?? lines.length;
+      final block = lines.sublist(defaultStartLine, end);
+      final defaultLine =
+          _patternCaseFromBlock(null, block, sel, st, swLabel, isDefault: true);
+      if (defaultLine != null) caseLines.add(defaultLine);
+    }
+
+    if (caseLines.isEmpty) {
+      stderr.writeln('DEBUG caseLines empty for $originalSelector');
+      return source;
+    }
+    stderr.writeln('DEBUG caseLines: $caseLines');
+
+    // 6. 组装新的 switch 表达式
+    final indent = '            ';
+    final newSwitch = <String>[
+      '        return switch ($originalSelector) {',
+      ...caseLines.map((l) => '$indent$l'),
+      '        };',
+    ];
+
+    // 7. 替换区域：把整个 pattern switch 生成的状态机替换为新的 switch 表达式
+    lines.replaceRange(headerStart, lines.length, newSwitch);
+    return lines.join('\n') + '\n';
+  }
+
+  String? _patternCaseFromBlock(
+    int? caseValue,
+    List<String> block,
+    String selectorVar,
+    String stateVar,
+    String switchLabel, {
+    bool isDefault = false,
+  }) {
+    if (block.isEmpty) return null;
+
+    // 找到结果表达式：块中最后一个 `return expr;`
+    String? resultExpr;
+    for (var i = block.length - 1; i >= 0; i--) {
+      final m = RegExp(r'^        return (.+);$').firstMatch(block[i]);
+      if (m != null) {
+        resultExpr = m.group(1);
+        break;
+      }
+    }
+    stderr.writeln('DEBUG raw resultExpr case=$caseValue: $resultExpr');
+
+    if (resultExpr == null) {
+      stderr.writeln('DEBUG resultExpr null case=$caseValue');
+      return null;
+    }
+
+    // 默认块 / null 块
+    if (isDefault) {
+      return 'default -> $resultExpr;';
+    }
+    if (caseValue == -1) {
+      return 'case null -> $resultExpr;';
+    }
+
+    // 找到模式变量声明：Type v = ((Type) selector);
+    final castRe = RegExp(r'^        (\S+(?:<[^>]+>)?) (\w+) = \(\(\1\) ' +
+        RegExp.escape(selectorVar) +
+        r'\);$');
+    String? patternType;
+    String? patternVar;
+    int? castLine;
+    for (var i = 0; i < block.length; i++) {
+      final m = castRe.firstMatch(block[i]);
+      if (m != null) {
+        patternType = m.group(1);
+        patternVar = m.group(2);
+        castLine = i;
+        break;
+      }
+    }
+    if (patternVar == null || patternType == null || castLine == null) {
+      stderr.writeln(
+          'DEBUG patternVar null case=$caseValue first=${block.firstOrNull}');
+      return null;
+    }
+    final castLineIdx = castLine;
+
+    // 收集组件访问别名：compVar = patternVar.method();
+    final aliasMap = <String, String>{};
+    final compRe = RegExp(r'^ *(?:\S+(?:<[^>]+>)? )?(\w+) = ' +
+        RegExp.escape(patternVar) +
+        r'\.(\w+)\(\);$');
+    final aliasRe = RegExp(r'^ *(?:\S+(?:<[^>]+>)? )?(\w+) = (\w+);$');
+    for (var i = castLineIdx + 1; i < block.length; i++) {
+      final line = block[i];
+      final cm = compRe.firstMatch(line);
+      if (cm != null) {
+        aliasMap[cm.group(1)!] = '$patternVar.${cm.group(2)!}()';
+        continue;
+      }
+      final am = aliasRe.firstMatch(line);
+      if (am != null) {
+        final src = am.group(2)!;
+        if (aliasMap.containsKey(src)) {
+          aliasMap[am.group(1)!] = aliasMap[src]!;
+        }
+      }
+    }
+
+    resultExpr = _replaceAliasNames(resultExpr, aliasMap).replaceAllMapped(
+        RegExp(r'(?:java\.lang\.)?String\.valueOf\(([^)]+)\)'),
+        (m) => m.group(1)!);
+
+    // 探测 guard：
+    // 1) 失败重试型：if (cond) { state = N; goto switch; } ... return expr;
+    // 2) 成功返回型：if (cond) goto label_true;  label_true: return expr;
+    String? guard;
+    final retryIfRe = RegExp(r'^ *if \((.+)\) \{$');
+    for (var i = castLineIdx + 1; i < block.length; i++) {
+      final m = retryIfRe.firstMatch(block[i]);
+      if (m == null) continue;
+      final cond = m.group(1)!;
+      if (_isTrivialCondition(cond)) continue;
+      var retries = false;
+      for (var k = i + 1;
+          k < block.length && !block[k].startsWith('        }');
+          k++) {
+        if (block[k].contains('goto $switchLabel;')) {
+          retries = true;
+          break;
+        }
+      }
+      if (retries) {
+        guard = _simplifyDoubleNegation(
+            _replaceAliasNames(_negateCondition(cond), aliasMap));
+        break;
+      }
+    }
+
+    final trueGuardRe = RegExp(r'^ *if \((.+)\) goto (label_\d+);$');
+    for (var i = castLineIdx + 1; i < block.length && guard == null; i++) {
+      final m = trueGuardRe.firstMatch(block[i]);
+      if (m == null) continue;
+      final cond = m.group(1)!;
+      final target = m.group(2)!;
+      if (_isTrivialCondition(cond)) continue;
+      for (var k = i + 1; k < block.length; k++) {
+        if (block[k].trim() == '$target:') {
+          guard = _simplifyDoubleNegation(_replaceAliasNames(cond, aliasMap));
+          break;
+        }
+      }
+      if (guard != null) break;
+    }
+
+    final guardPart = guard != null ? ' when $guard' : '';
+    final simpleType = _simplifyTypeName(patternType);
+    return 'case $simpleType $patternVar$guardPart -> $resultExpr;';
+  }
+
+  String _simplifyTypeName(String type) {
+    const prefix = 'java.lang.';
+    if (type.startsWith(prefix)) return type.substring(prefix.length);
+    return type;
+  }
+
+  String _replaceAliasNames(String expr, Map<String, String> aliasMap) {
+    if (aliasMap.isEmpty) return expr;
+    final entries = aliasMap.entries.toList()
+      ..sort((a, b) => b.key.length.compareTo(a.key.length));
+    var result = expr;
+    for (final e in entries) {
+      result = result.replaceAll(
+          RegExp(r'\b' + RegExp.escape(e.key) + r'\b'), e.value);
+    }
+    return result;
+  }
+
+  bool _isTrivialCondition(String cond) {
+    final c = cond.replaceAll(' ', '');
+    return c == '1' ||
+        c == '0' ||
+        c == 'true' ||
+        c == 'false' ||
+        c == '1==0' ||
+        c == '0==1' ||
+        c == '1!=0' ||
+        c == '0!=1';
+  }
+
+  String _simplifyDoubleNegation(String cond) {
+    var result = cond.trim();
+    while (true) {
+      if (result.startsWith('!(') && result.endsWith(')')) {
+        final inner = result.substring(2, result.length - 1).trim();
+        if (inner.startsWith('!')) {
+          result = inner.substring(1).trim();
+          continue;
+        }
+      }
+      if (result.startsWith('!!')) {
+        result = result.substring(2).trim();
+        continue;
+      }
+      break;
+    }
+    return result;
+  }
+
+  /// 利用 LocalVariableTable 把生成的 pN 变量名还原成源码中的名字。
+  String _restoreVariableNames(String source) {
+    stderr.writeln(
+        'restoreVariableNames called for ${_pool.getString(_method.nameIndex)}');
+    LocalVariableTableAttribute? lvt;
+    for (final attr in _method.attributes) {
+      if (attr is LocalVariableTableAttribute) {
+        lvt = attr;
+        break;
+      }
+    }
+    if (lvt == null) {
+      // 临时调试：打印方法名以确认是否有局部变量表
+      stderr.writeln('no LVT for ${_pool.getString(_method.nameIndex)}');
+      return source;
+    }
+    stderr.writeln('has LVT for ${_pool.getString(_method.nameIndex)}');
+
+    final renames = <int, String>{};
+    for (final e in lvt.localVariableTable) {
+      final name = _pool.getString(e.nameIndex);
+      if (name.isEmpty) continue;
+      if (!renames.containsKey(e.index)) {
+        renames[e.index] = name;
+      }
+    }
+    stderr.writeln(
+        'LVT renames for ${_pool.getString(_method.nameIndex)}: $renames');
+    if (renames.isEmpty) return source;
+
+    final entries = renames.entries.toList()
+      ..sort((a, b) => b.key.compareTo(a.key));
+    var result = source;
+    for (final e in entries) {
+      final from = 'p${e.key}';
+      result = result.replaceAll(
+          RegExp(r'\b' + RegExp.escape(from) + r'\b'), e.value);
+    }
+    return result;
   }
 }

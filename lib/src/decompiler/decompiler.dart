@@ -366,7 +366,7 @@ class Decompiler {
     sb.writeln(' {');
     final code = method.attribute<CodeAttribute>();
     if (code != null) {
-      final printer = CodePrinter(method, code, _pool);
+      final printer = CodePrinter(method, code, _cf);
       sb.write(printer.printBody());
     } else {
       sb.writeln('        // no Code attribute');
