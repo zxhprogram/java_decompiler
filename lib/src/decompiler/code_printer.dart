@@ -1240,7 +1240,9 @@ class CodePrinter {
                   .descriptorIndex,
             ),
           ).$1;
-          for (var k = 0; k < params.length; k++) pop();
+          for (var k = 0; k < params.length; k++) {
+            pop();
+          }
           if (i.opcode != Opcodes.invokestatic &&
               i.opcode != Opcodes.invokedynamic) {
             pop();
@@ -1292,7 +1294,9 @@ class CodePrinter {
           break;
         case Opcodes.multianewarray:
           final dims = i.operands[1] as int;
-          for (var k = 0; k < dims; k++) pop();
+          for (var k = 0; k < dims; k++) {
+            pop();
+          }
           push(_TypedValue('',
               type: DescriptorParser.parseFieldDescriptor(
                 _pool.getString(i.operands[0] as int),
@@ -1454,7 +1458,7 @@ class CodePrinter {
       final tryAfterEnd = offsetToLine[e.endPc];
       final catchStart = offsetToLine[e.handlerPc];
       if (tryStart == null || catchStart == null) continue;
-      final searchEnd = tryAfterEnd != null ? tryAfterEnd : lines.length - 1;
+      final searchEnd = tryAfterEnd ?? lines.length - 1;
       if (searchEnd < tryStart) continue;
 
       // 在 try 区域及紧邻的下一条指令里找到跳过后续 catch 的 goto。
@@ -1613,10 +1617,10 @@ class CodePrinter {
           ...thenBody.map(bodyIndent),
         ];
         if (elseBody.any((l) => l.trim().isNotEmpty)) {
-          newLines.add('${indent}} else {');
+          newLines.add('$indent} else {');
           newLines.addAll(elseBody.map(bodyIndent));
         }
-        newLines.add('${indent}}');
+        newLines.add('$indent}');
         lines.replaceRange(i, endLine + 1, newLines);
         changed = true;
         break;
@@ -1688,9 +1692,9 @@ class CodePrinter {
         final newLines = <String>[
           '${indent}if (${_negateCondition(cond)}) {',
           ...thenBody.map(bodyIndent),
-          '${indent}} else {',
+          '$indent} else {',
           ...elseBody.map(bodyIndent),
-          '${indent}}',
+          '$indent}',
         ];
         lines.replaceRange(i, endLine + 1, newLines);
         changed = true;
