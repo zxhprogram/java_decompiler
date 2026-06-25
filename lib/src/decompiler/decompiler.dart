@@ -1,4 +1,6 @@
 import '../attributes/attribute_models.dart';
+import '../bytecode/bytecode_decoder.dart';
+import '../bytecode/instructions.dart';
 import '../class_file.dart';
 import '../constants/constant_pool.dart';
 import '../descriptor_parser.dart';
@@ -7,9 +9,10 @@ import 'code_printer.dart';
 
 class Decompiler {
   final ClassFile _cf;
+  final bool hideEmptyPublicConstructors;
   late final ConstantPool _pool;
 
-  Decompiler(this._cf) {
+  Decompiler(this._cf, {this.hideEmptyPublicConstructors = false}) {
     _pool = _cf.constantPool;
   }
 
@@ -167,6 +170,11 @@ class Decompiler {
   }
 
   void _writeMethod(StringBuffer sb, MethodInfo method, String className) {
+    if (hideEmptyPublicConstructors &&
+        _isEmptyPublicDefaultConstructor(method)) {
+      return;
+    }
+
     final rawName = _pool.getString(method.nameIndex);
     final desc = _pool.getString(method.descriptorIndex);
     final (paramTypes, returnType) =
@@ -211,6 +219,32 @@ class Decompiler {
       sb.writeln('        // no Code attribute');
     }
     sb.writeln('    }');
+  }
+
+  bool _isEmptyPublicDefaultConstructor(MethodInfo method) {
+    if ((method.accessFlags & AccessFlags.ACC_PUBLIC) == 0) return false;
+    if (_pool.getString(method.nameIndex) != '<init>') return false;
+    if (_pool.getString(method.descriptorIndex) != '()V') return false;
+    if (_cf.superClass == 0) return false;
+    final superName = _pool.getClassName(_cf.superClass);
+    if (superName != 'java/lang/Object') return false;
+
+    final code = method.attribute<CodeAttribute>();
+    if (code == null) return false;
+
+    final ins = BytecodeDecoder(code.code).decode();
+    if (ins.length != 3) return false;
+    if (ins[0].opcode != Opcodes.aload_0) return false;
+    if (ins[1].opcode != Opcodes.invokespecial) return false;
+    if (ins[2].opcode != Opcodes.return_) return false;
+
+    final ref = _pool.getMethodref(ins[1].operands[0] as int);
+    final cls = DescriptorParser.internalToSourceName(
+      _pool.getClassName(ref.classIndex),
+    );
+    final nt = _pool.getNameAndType(ref.nameAndTypeIndex);
+    final name = _pool.getString(nt.nameIndex);
+    return cls == 'java.lang.Object' && name == '<init>';
   }
 
   void _writeMemberAnnotations(StringBuffer sb, MemberInfo member) {
