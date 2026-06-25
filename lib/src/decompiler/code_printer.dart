@@ -13,6 +13,29 @@ class CodePrinter {
 
   CodePrinter(this._method, this._code, this._pool);
 
+  static final Set<int> _branchOpcodes = {
+    Opcodes.ifeq,
+    Opcodes.ifne,
+    Opcodes.iflt,
+    Opcodes.ifge,
+    Opcodes.ifgt,
+    Opcodes.ifle,
+    Opcodes.if_icmpeq,
+    Opcodes.if_icmpne,
+    Opcodes.if_icmplt,
+    Opcodes.if_icmpge,
+    Opcodes.if_icmpgt,
+    Opcodes.if_icmple,
+    Opcodes.if_acmpeq,
+    Opcodes.if_acmpne,
+    Opcodes.goto_,
+    Opcodes.jsr,
+    Opcodes.ifnull,
+    Opcodes.ifnonnull,
+    Opcodes.goto_w,
+    Opcodes.jsr_w,
+  };
+
   String printBody() {
     final instructions = BytecodeDecoder(_code.code).decode();
     if (instructions.isEmpty) {
@@ -133,10 +156,21 @@ class CodePrinter {
     final out = StringBuffer();
     final labels = <int>{};
     for (final i in ins) {
-      for (final op in i.operands) {
-        if (op is int && op >= 0 && op < _code.code.length) labels.add(op);
+      if (_branchOpcodes.contains(i.opcode) ||
+          i.opcode == Opcodes.tableswitch ||
+          i.opcode == Opcodes.lookupswitch) {
+        for (final op in i.operands) {
+          if (op is int && op >= 0 && op <= _code.code.length) labels.add(op);
+        }
       }
     }
+
+    final returnType = DescriptorParser.parseMethodDescriptor(
+      _pool.getString(_method.descriptorIndex),
+    ).$2;
+    final isVoid = returnType == 'void';
+    final skipFinalReturn =
+        isVoid && ins.isNotEmpty && ins.last.opcode == Opcodes.return_;
 
     final stack = <String>[];
     String pop() => stack.isEmpty ? '/*stack underflow*/' : stack.removeLast();
@@ -446,7 +480,11 @@ class CodePrinter {
               Opcodes.areturn:
           out.writeln('        return ${pop()};');
         case Opcodes.return_:
-          out.writeln('        return;');
+          if (skipFinalReturn && i == ins.last) {
+            // void 方法末尾的 return 可以省略
+          } else {
+            out.writeln('        return;');
+          }
         case Opcodes.getstatic:
           final (cname, fname, fdesc) = _fieldRef(i.operands[0] as int);
           push('$cname.$fname');
