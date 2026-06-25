@@ -6,6 +6,12 @@ import '../constants/constant_pool.dart';
 import '../descriptor_parser.dart';
 import '../flags/access_flags.dart';
 
+class _TypedValue {
+  final String expr;
+  final String type;
+  _TypedValue(this.expr, {this.type = ''});
+}
+
 class CodePrinter {
   final MethodInfo _method;
   final CodeAttribute _code;
@@ -178,12 +184,42 @@ class CodePrinter {
     final isStatic = (_method.accessFlags & AccessFlags.ACC_STATIC) != 0;
     final methodDesc = _pool.getString(_method.descriptorIndex);
     final localNames = _buildLocalNames(isStatic, methodDesc);
+    final (storeTypes, _) = _inferStoreTypes(ins);
+    final localDeclaredTypes = <int, String>{};
 
-    for (final i in ins) {
+    // 异常处理器入口：JVM 会把异常对象压入操作数栈。
+    final handlerTypes = <int, String>{};
+    for (final e in _code.exceptionTable) {
+      if (!handlerTypes.containsKey(e.handlerPc)) {
+        handlerTypes[e.handlerPc] = e.catchType == 0
+            ? 'Throwable'
+            : DescriptorParser.internalToSourceName(
+                _pool.getClassName(e.catchType));
+      }
+    }
+
+    void emitStore(int slot, String value, int idx) {
+      final name = localNames[slot] ?? 'p$slot';
+      final type = storeTypes[idx];
+      if (type != null && type.isNotEmpty && localDeclaredTypes[slot] != type) {
+        out.writeln('        $type $name = $value;');
+        localDeclaredTypes[slot] = type;
+      } else {
+        out.writeln('        $name = $value;');
+      }
+    }
+
+    for (var idx = 0; idx < ins.length; idx++) {
+      final i = ins[idx];
       if (labels.contains(i.offset)) {
         out.writeln('      label_${i.offset}:');
       }
       void push(String v) => stack.add(v);
+
+      final handlerType = handlerTypes[i.offset];
+      if (handlerType != null) {
+        push('/*exception*/');
+      }
 
       switch (i.opcode) {
         case Opcodes.nop:
@@ -264,31 +300,31 @@ class CodePrinter {
               Opcodes.astore:
           final v = pop();
           final slot = i.operands[0] as int;
-          out.writeln('        ${localNames[slot] ?? "lv$slot"} = $v;');
+          emitStore(slot, v, idx);
         case Opcodes.istore_0 ||
               Opcodes.lstore_0 ||
               Opcodes.fstore_0 ||
               Opcodes.dstore_0 ||
               Opcodes.astore_0:
-          _emitStore(out, localNames[0], pop());
+          emitStore(0, pop(), idx);
         case Opcodes.istore_1 ||
               Opcodes.lstore_1 ||
               Opcodes.fstore_1 ||
               Opcodes.dstore_1 ||
               Opcodes.astore_1:
-          _emitStore(out, localNames[1], pop());
+          emitStore(1, pop(), idx);
         case Opcodes.istore_2 ||
               Opcodes.lstore_2 ||
               Opcodes.fstore_2 ||
               Opcodes.dstore_2 ||
               Opcodes.astore_2:
-          _emitStore(out, localNames[2], pop());
+          emitStore(2, pop(), idx);
         case Opcodes.istore_3 ||
               Opcodes.lstore_3 ||
               Opcodes.fstore_3 ||
               Opcodes.dstore_3 ||
               Opcodes.astore_3:
-          _emitStore(out, localNames[3], pop());
+          emitStore(3, pop(), idx);
         case Opcodes.iastore ||
               Opcodes.lastore ||
               Opcodes.fastore ||
@@ -572,10 +608,6 @@ class CodePrinter {
     return out.toString();
   }
 
-  void _emitStore(StringBuffer out, String? name, String value) {
-    out.writeln('        ${name ?? "?"} = $value;');
-  }
-
   Map<int, String> _buildLocalNames(bool isStatic, String descriptor) {
     final names = <int, String>{};
     if (!isStatic) names[0] = 'this';
@@ -600,6 +632,665 @@ class CodePrinter {
     return names;
   }
 
+  /// 推断每个局部变量槽在每次 store 指令时被写入的类型，用于输出类型声明。
+  (List<String?>, List<int?>) _inferStoreTypes(List<Instruction> ins) {
+    final storeTypes = List<String?>.filled(ins.length, null);
+    final storeSlots = List<int?>.filled(ins.length, null);
+    final localTypes = <int, String>{};
+    final stack = <_TypedValue>[];
+
+    _TypedValue pop() => stack.isEmpty ? _TypedValue('') : stack.removeLast();
+    void push(_TypedValue v) => stack.add(v);
+
+    String componentType(String type) {
+      if (type.endsWith('[]')) return type.substring(0, type.length - 2);
+      return '';
+    }
+
+    String classType(int poolIndex) =>
+        DescriptorParser.internalToSourceName(_pool.getClassName(poolIndex));
+
+    String invokeReturnType(int opcode, int operand) {
+      int descriptorIndex;
+      if (opcode == Opcodes.invokeinterface) {
+        final ref = _pool.getInterfaceMethodref(operand);
+        descriptorIndex =
+            _pool.getNameAndType(ref.nameAndTypeIndex).descriptorIndex;
+      } else if (opcode == Opcodes.invokedynamic) {
+        final dyn = _pool.getInvokeDynamic(operand);
+        descriptorIndex =
+            _pool.getNameAndType(dyn.nameAndTypeIndex).descriptorIndex;
+      } else {
+        final ref = _pool.getMethodref(operand);
+        descriptorIndex =
+            _pool.getNameAndType(ref.nameAndTypeIndex).descriptorIndex;
+      }
+      return DescriptorParser.parseMethodDescriptor(
+        _pool.getString(descriptorIndex),
+      ).$2;
+    }
+
+    void recordStore(int slot, _TypedValue v, int instructionIndex) {
+      storeSlots[instructionIndex] = slot;
+      storeTypes[instructionIndex] = v.type;
+      final cur = localTypes[slot];
+      localTypes[slot] = (cur == null || cur.isEmpty) ? v.type : cur;
+    }
+
+    // 异常处理器入口：JVM 会把异常对象压入操作数栈。
+    final handlerTypes = <int, String>{};
+    for (final e in _code.exceptionTable) {
+      if (!handlerTypes.containsKey(e.handlerPc)) {
+        handlerTypes[e.handlerPc] = e.catchType == 0
+            ? 'Throwable'
+            : DescriptorParser.internalToSourceName(
+                _pool.getClassName(e.catchType));
+      }
+    }
+
+    for (var idx = 0; idx < ins.length; idx++) {
+      final i = ins[idx];
+      final handlerType = handlerTypes[i.offset];
+      if (handlerType != null) {
+        push(_TypedValue('/*exception*/', type: handlerType));
+      }
+
+      switch (i.opcode) {
+        case Opcodes.nop:
+        case Opcodes.goto_:
+        case Opcodes.goto_w:
+        case Opcodes.jsr:
+        case Opcodes.jsr_w:
+        case Opcodes.return_:
+        case Opcodes.ireturn:
+        case Opcodes.lreturn:
+        case Opcodes.freturn:
+        case Opcodes.dreturn:
+        case Opcodes.areturn:
+        case Opcodes.tableswitch:
+        case Opcodes.lookupswitch:
+          break;
+
+        case Opcodes.aconst_null:
+          push(_TypedValue('null'));
+          break;
+        case Opcodes.iconst_m1:
+        case Opcodes.iconst_0:
+        case Opcodes.iconst_1:
+        case Opcodes.iconst_2:
+        case Opcodes.iconst_3:
+        case Opcodes.iconst_4:
+        case Opcodes.iconst_5:
+        case Opcodes.bipush:
+        case Opcodes.sipush:
+          push(_TypedValue('int', type: 'int'));
+          break;
+        case Opcodes.lconst_0:
+        case Opcodes.lconst_1:
+          push(_TypedValue('long', type: 'long'));
+          break;
+        case Opcodes.fconst_0:
+        case Opcodes.fconst_1:
+        case Opcodes.fconst_2:
+          push(_TypedValue('float', type: 'float'));
+          break;
+        case Opcodes.dconst_0:
+        case Opcodes.dconst_1:
+          push(_TypedValue('double', type: 'double'));
+          break;
+
+        case Opcodes.ldc:
+        case Opcodes.ldc_w:
+        case Opcodes.ldc2_w:
+          final entry = _pool.get(i.operands[0] as int);
+          String type;
+          if (entry is CpString) {
+            type = 'String';
+          } else if (entry is CpInteger) {
+            type = 'int';
+          } else if (entry is CpFloat) {
+            type = 'float';
+          } else if (entry is CpLong) {
+            type = 'long';
+          } else if (entry is CpDouble) {
+            type = 'double';
+          } else if (entry is CpClass) {
+            type = 'Class';
+          } else {
+            type = '';
+          }
+          push(_TypedValue('literal', type: type));
+          break;
+
+        case Opcodes.iload:
+        case Opcodes.iload_0:
+        case Opcodes.iload_1:
+        case Opcodes.iload_2:
+        case Opcodes.iload_3:
+          push(_TypedValue('int', type: 'int'));
+          break;
+        case Opcodes.lload:
+        case Opcodes.lload_0:
+        case Opcodes.lload_1:
+        case Opcodes.lload_2:
+        case Opcodes.lload_3:
+          push(_TypedValue('long', type: 'long'));
+          break;
+        case Opcodes.fload:
+        case Opcodes.fload_0:
+        case Opcodes.fload_1:
+        case Opcodes.fload_2:
+        case Opcodes.fload_3:
+          push(_TypedValue('float', type: 'float'));
+          break;
+        case Opcodes.dload:
+        case Opcodes.dload_0:
+        case Opcodes.dload_1:
+        case Opcodes.dload_2:
+        case Opcodes.dload_3:
+          push(_TypedValue('double', type: 'double'));
+          break;
+        case Opcodes.aload:
+          push(_TypedValue('', type: localTypes[i.operands[0] as int] ?? ''));
+          break;
+        case Opcodes.aload_0:
+          push(_TypedValue('', type: localTypes[0] ?? ''));
+          break;
+        case Opcodes.aload_1:
+          push(_TypedValue('', type: localTypes[1] ?? ''));
+          break;
+        case Opcodes.aload_2:
+          push(_TypedValue('', type: localTypes[2] ?? ''));
+          break;
+        case Opcodes.aload_3:
+          push(_TypedValue('', type: localTypes[3] ?? ''));
+          break;
+
+        case Opcodes.iaload:
+          pop();
+          pop();
+          push(_TypedValue('int', type: 'int'));
+          break;
+        case Opcodes.laload:
+          pop();
+          pop();
+          push(_TypedValue('long', type: 'long'));
+          break;
+        case Opcodes.faload:
+          pop();
+          pop();
+          push(_TypedValue('float', type: 'float'));
+          break;
+        case Opcodes.daload:
+          pop();
+          pop();
+          push(_TypedValue('double', type: 'double'));
+          break;
+        case Opcodes.aaload:
+          pop();
+          final arr = pop();
+          push(_TypedValue('', type: componentType(arr.type)));
+          break;
+        case Opcodes.baload:
+        case Opcodes.caload:
+        case Opcodes.saload:
+          pop();
+          pop();
+          push(_TypedValue('int', type: 'int'));
+          break;
+
+        case Opcodes.istore:
+          recordStore(
+              i.operands[0] as int, _TypedValue('int', type: 'int'), idx);
+          break;
+        case Opcodes.lstore:
+          recordStore(
+              i.operands[0] as int, _TypedValue('long', type: 'long'), idx);
+          break;
+        case Opcodes.fstore:
+          recordStore(
+              i.operands[0] as int, _TypedValue('float', type: 'float'), idx);
+          break;
+        case Opcodes.dstore:
+          recordStore(
+              i.operands[0] as int, _TypedValue('double', type: 'double'), idx);
+          break;
+        case Opcodes.astore:
+          recordStore(i.operands[0] as int, pop(), idx);
+          break;
+        case Opcodes.istore_0:
+          recordStore(0, _TypedValue('int', type: 'int'), idx);
+          break;
+        case Opcodes.istore_1:
+          recordStore(1, _TypedValue('int', type: 'int'), idx);
+          break;
+        case Opcodes.istore_2:
+          recordStore(2, _TypedValue('int', type: 'int'), idx);
+          break;
+        case Opcodes.istore_3:
+          recordStore(3, _TypedValue('int', type: 'int'), idx);
+          break;
+        case Opcodes.lstore_0:
+          recordStore(0, _TypedValue('long', type: 'long'), idx);
+          break;
+        case Opcodes.lstore_1:
+          recordStore(1, _TypedValue('long', type: 'long'), idx);
+          break;
+        case Opcodes.lstore_2:
+          recordStore(2, _TypedValue('long', type: 'long'), idx);
+          break;
+        case Opcodes.lstore_3:
+          recordStore(3, _TypedValue('long', type: 'long'), idx);
+          break;
+        case Opcodes.fstore_0:
+          recordStore(0, _TypedValue('float', type: 'float'), idx);
+          break;
+        case Opcodes.fstore_1:
+          recordStore(1, _TypedValue('float', type: 'float'), idx);
+          break;
+        case Opcodes.fstore_2:
+          recordStore(2, _TypedValue('float', type: 'float'), idx);
+          break;
+        case Opcodes.fstore_3:
+          recordStore(3, _TypedValue('float', type: 'float'), idx);
+          break;
+        case Opcodes.dstore_0:
+          recordStore(0, _TypedValue('double', type: 'double'), idx);
+          break;
+        case Opcodes.dstore_1:
+          recordStore(1, _TypedValue('double', type: 'double'), idx);
+          break;
+        case Opcodes.dstore_2:
+          recordStore(2, _TypedValue('double', type: 'double'), idx);
+          break;
+        case Opcodes.dstore_3:
+          recordStore(3, _TypedValue('double', type: 'double'), idx);
+          break;
+        case Opcodes.astore_0:
+          recordStore(0, pop(), idx);
+          break;
+        case Opcodes.astore_1:
+          recordStore(1, pop(), idx);
+          break;
+        case Opcodes.astore_2:
+          recordStore(2, pop(), idx);
+          break;
+        case Opcodes.astore_3:
+          recordStore(3, pop(), idx);
+          break;
+        case Opcodes.iastore:
+        case Opcodes.lastore:
+        case Opcodes.fastore:
+        case Opcodes.dastore:
+        case Opcodes.aastore:
+        case Opcodes.bastore:
+        case Opcodes.castore:
+        case Opcodes.sastore:
+          pop();
+          pop();
+          pop();
+          break;
+
+        case Opcodes.pop:
+          if (stack.isNotEmpty) stack.removeLast();
+          break;
+        case Opcodes.pop2:
+          if (stack.isNotEmpty) stack.removeLast();
+          if (stack.isNotEmpty) stack.removeLast();
+          break;
+        case Opcodes.dup:
+          if (stack.isNotEmpty) push(stack.last);
+          break;
+        case Opcodes.dup_x1:
+          if (stack.length >= 2) {
+            final a = pop();
+            final b = pop();
+            push(a);
+            push(b);
+            push(a);
+          }
+          break;
+        case Opcodes.dup_x2:
+          if (stack.length >= 3) {
+            final a = pop();
+            final b = pop();
+            final c = pop();
+            push(a);
+            push(c);
+            push(b);
+            push(a);
+          }
+          break;
+        case Opcodes.dup2:
+          if (stack.length >= 2) {
+            final a = pop();
+            final b = pop();
+            push(b);
+            push(a);
+            push(b);
+            push(a);
+          }
+          break;
+        case Opcodes.dup2_x1:
+          if (stack.length >= 3) {
+            final a = pop();
+            final b = pop();
+            final c = pop();
+            push(b);
+            push(a);
+            push(c);
+            push(b);
+            push(a);
+          }
+          break;
+        case Opcodes.dup2_x2:
+          if (stack.length >= 4) {
+            final a = pop();
+            final b = pop();
+            final c = pop();
+            final d = pop();
+            push(b);
+            push(a);
+            push(d);
+            push(c);
+            push(b);
+            push(a);
+          }
+          break;
+        case Opcodes.swap:
+          if (stack.length >= 2) {
+            final a = pop();
+            final b = pop();
+            push(a);
+            push(b);
+          }
+          break;
+
+        case Opcodes.iadd:
+        case Opcodes.isub:
+        case Opcodes.imul:
+        case Opcodes.idiv:
+        case Opcodes.irem:
+        case Opcodes.ineg:
+        case Opcodes.iand:
+        case Opcodes.ior:
+        case Opcodes.ixor:
+        case Opcodes.ishl:
+        case Opcodes.ishr:
+        case Opcodes.iushr:
+          if (i.opcode != Opcodes.ineg) pop();
+          pop();
+          push(_TypedValue('int', type: 'int'));
+          break;
+        case Opcodes.ladd:
+        case Opcodes.lsub:
+        case Opcodes.lmul:
+        case Opcodes.ldiv:
+        case Opcodes.lrem:
+        case Opcodes.lneg:
+        case Opcodes.land:
+        case Opcodes.lor:
+        case Opcodes.lxor:
+        case Opcodes.lshl:
+        case Opcodes.lshr:
+        case Opcodes.lushr:
+          if (i.opcode != Opcodes.lneg) pop();
+          pop();
+          push(_TypedValue('long', type: 'long'));
+          break;
+        case Opcodes.fadd:
+        case Opcodes.fsub:
+        case Opcodes.fmul:
+        case Opcodes.fdiv:
+        case Opcodes.frem:
+        case Opcodes.fneg:
+          if (i.opcode != Opcodes.fneg) pop();
+          pop();
+          push(_TypedValue('float', type: 'float'));
+          break;
+        case Opcodes.dadd:
+        case Opcodes.dsub:
+        case Opcodes.dmul:
+        case Opcodes.ddiv:
+        case Opcodes.drem:
+        case Opcodes.dneg:
+          if (i.opcode != Opcodes.dneg) pop();
+          pop();
+          push(_TypedValue('double', type: 'double'));
+          break;
+
+        case Opcodes.iinc:
+          break;
+
+        case Opcodes.i2l:
+          pop();
+          push(_TypedValue('long', type: 'long'));
+          break;
+        case Opcodes.i2f:
+          pop();
+          push(_TypedValue('float', type: 'float'));
+          break;
+        case Opcodes.i2d:
+          pop();
+          push(_TypedValue('double', type: 'double'));
+          break;
+        case Opcodes.l2i:
+          pop();
+          push(_TypedValue('int', type: 'int'));
+          break;
+        case Opcodes.l2f:
+          pop();
+          push(_TypedValue('float', type: 'float'));
+          break;
+        case Opcodes.l2d:
+          pop();
+          push(_TypedValue('double', type: 'double'));
+          break;
+        case Opcodes.f2i:
+          pop();
+          push(_TypedValue('int', type: 'int'));
+          break;
+        case Opcodes.f2l:
+          pop();
+          push(_TypedValue('long', type: 'long'));
+          break;
+        case Opcodes.f2d:
+          pop();
+          push(_TypedValue('double', type: 'double'));
+          break;
+        case Opcodes.d2i:
+          pop();
+          push(_TypedValue('int', type: 'int'));
+          break;
+        case Opcodes.d2l:
+          pop();
+          push(_TypedValue('long', type: 'long'));
+          break;
+        case Opcodes.d2f:
+          pop();
+          push(_TypedValue('float', type: 'float'));
+          break;
+        case Opcodes.i2b:
+          pop();
+          push(_TypedValue('byte', type: 'byte'));
+          break;
+        case Opcodes.i2c:
+          pop();
+          push(_TypedValue('char', type: 'char'));
+          break;
+        case Opcodes.i2s:
+          pop();
+          push(_TypedValue('short', type: 'short'));
+          break;
+
+        case Opcodes.lcmp:
+        case Opcodes.fcmpl:
+        case Opcodes.fcmpg:
+        case Opcodes.dcmpl:
+        case Opcodes.dcmpg:
+          pop();
+          pop();
+          push(_TypedValue('int', type: 'boolean'));
+          break;
+
+        case Opcodes.ifeq:
+        case Opcodes.ifne:
+        case Opcodes.iflt:
+        case Opcodes.ifge:
+        case Opcodes.ifgt:
+        case Opcodes.ifle:
+        case Opcodes.ifnull:
+        case Opcodes.ifnonnull:
+          pop();
+          break;
+        case Opcodes.if_icmpeq:
+        case Opcodes.if_icmpne:
+        case Opcodes.if_icmplt:
+        case Opcodes.if_icmpge:
+        case Opcodes.if_icmpgt:
+        case Opcodes.if_icmple:
+        case Opcodes.if_acmpeq:
+        case Opcodes.if_acmpne:
+          pop();
+          pop();
+          break;
+
+        case Opcodes.getstatic:
+          final ref = _pool.getFieldref(i.operands[0] as int);
+          final desc = _pool.getString(
+            _pool.getNameAndType(ref.nameAndTypeIndex).descriptorIndex,
+          );
+          push(_TypedValue('',
+              type: DescriptorParser.parseFieldDescriptor(desc)));
+          break;
+        case Opcodes.putstatic:
+          pop();
+          break;
+        case Opcodes.getfield:
+          pop();
+          final ref = _pool.getFieldref(i.operands[0] as int);
+          final desc = _pool.getString(
+            _pool.getNameAndType(ref.nameAndTypeIndex).descriptorIndex,
+          );
+          push(_TypedValue('',
+              type: DescriptorParser.parseFieldDescriptor(desc)));
+          break;
+        case Opcodes.putfield:
+          pop();
+          pop();
+          break;
+
+        case Opcodes.invokevirtual:
+        case Opcodes.invokespecial:
+        case Opcodes.invokestatic:
+        case Opcodes.invokeinterface:
+        case Opcodes.invokedynamic:
+          final params = DescriptorParser.parseMethodDescriptor(
+            _pool.getString(
+              _pool
+                  .getNameAndType(
+                    i.opcode == Opcodes.invokeinterface
+                        ? _pool
+                            .getInterfaceMethodref(i.operands[0] as int)
+                            .nameAndTypeIndex
+                        : i.opcode == Opcodes.invokedynamic
+                            ? _pool
+                                .getInvokeDynamic(i.operands[0] as int)
+                                .nameAndTypeIndex
+                            : _pool
+                                .getMethodref(i.operands[0] as int)
+                                .nameAndTypeIndex,
+                  )
+                  .descriptorIndex,
+            ),
+          ).$1;
+          for (var k = 0; k < params.length; k++) pop();
+          if (i.opcode != Opcodes.invokestatic &&
+              i.opcode != Opcodes.invokedynamic) {
+            pop();
+          }
+          final rt = invokeReturnType(i.opcode, i.operands[0] as int);
+          if (rt != 'void') push(_TypedValue('', type: rt));
+          break;
+
+        case Opcodes.new_:
+          push(_TypedValue('', type: classType(i.operands[0] as int)));
+          break;
+        case Opcodes.newarray:
+          pop();
+          final t = switch (i.operands[0] as int) {
+            4 => 'boolean[]',
+            5 => 'char[]',
+            6 => 'float[]',
+            7 => 'double[]',
+            8 => 'byte[]',
+            9 => 'short[]',
+            10 => 'int[]',
+            11 => 'long[]',
+            _ => '',
+          };
+          push(_TypedValue('', type: t));
+          break;
+        case Opcodes.anewarray:
+          pop();
+          push(_TypedValue('', type: '${classType(i.operands[0] as int)}[]'));
+          break;
+        case Opcodes.arraylength:
+          pop();
+          push(_TypedValue('int', type: 'int'));
+          break;
+        case Opcodes.athrow:
+          pop();
+          break;
+        case Opcodes.checkcast:
+          pop();
+          push(_TypedValue('', type: classType(i.operands[0] as int)));
+          break;
+        case Opcodes.instanceof:
+          pop();
+          push(_TypedValue('boolean', type: 'boolean'));
+          break;
+        case Opcodes.monitorenter:
+        case Opcodes.monitorexit:
+          pop();
+          break;
+        case Opcodes.multianewarray:
+          final dims = i.operands[1] as int;
+          for (var k = 0; k < dims; k++) pop();
+          push(_TypedValue('',
+              type: DescriptorParser.parseFieldDescriptor(
+                _pool.getString(i.operands[0] as int),
+              )));
+          break;
+
+        default:
+          // 未知指令：清空栈，避免错误传播。
+          stack.clear();
+      }
+    }
+
+    // 反向传播：把 null/未知赋值后续的实际类型补回来。
+    final bySlot = <int, List<int>>{};
+    for (var idx = 0; idx < ins.length; idx++) {
+      final s = storeSlots[idx];
+      if (s != null) bySlot.putIfAbsent(s, () => []).add(idx);
+    }
+    for (final indices in bySlot.values) {
+      var pending = '';
+      for (var k = indices.length - 1; k >= 0; k--) {
+        final idx = indices[k];
+        final t = storeTypes[idx];
+        if (t != null && t.isNotEmpty) {
+          pending = t;
+        } else if (pending.isNotEmpty) {
+          storeTypes[idx] = pending;
+        }
+      }
+    }
+
+    return (storeTypes, storeSlots);
+  }
+
   /// 把简单的 `if ... goto label` 伪代码转换成普通的 if 分支。
   String _structureIfs(String source) {
     final lines = source.split('\n');
@@ -615,7 +1306,9 @@ class CodePrinter {
         if (m != null) labelMap[m.group(1)!] = i;
       }
 
-      for (var i = 0; i < lines.length; i++) {
+      // 从后往前处理，这样嵌套的 if 可以先被转换成内层 if 块，
+      // 再处理外层共享同一个合并标号的 if。
+      for (var i = lines.length - 1; i >= 0; i--) {
         final m = gotoRe.firstMatch(lines[i]);
         if (m == null) continue;
         final cond = m.group(1)!;
@@ -633,10 +1326,10 @@ class CodePrinter {
         }
         if (bodyHasLabel) continue;
 
-        // 同一标号不能被其他跳转引用。
+        // 当前 goto 之后不能再有其它跳转引用同一标号（未处理的）。
+        // 之前的引用会在后续迭代中处理（外层 if）。
         var otherRefs = false;
-        for (var k = 0; k < lines.length; k++) {
-          if (k == i) continue;
+        for (var k = i + 1; k < lines.length; k++) {
           if (lines[k].contains('goto $label;')) {
             otherRefs = true;
             break;
@@ -708,8 +1401,11 @@ class CodePrinter {
 
   void _maybeEmitDiscarded(String value, StringSink out) {
     // 丢弃非平凡的表达式时（例如调用的返回值未使用），输出为独立语句。
+    // 跳过无参的 new Class().<init>()，它通常来自 new/dup/invokespecial 组合。
     final simple = RegExp(r'^[a-zA-Z_$][\w$]*$');
-    if (!simple.hasMatch(value) && value != '/*stack underflow*/') {
+    if (!simple.hasMatch(value) &&
+        value != '/*stack underflow*/' &&
+        !value.endsWith('.<init>()')) {
       out.writeln('        $value;');
     }
   }
