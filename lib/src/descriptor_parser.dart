@@ -1,6 +1,4 @@
-/// 将字段/方法描述符解析为 Java 源码风格的类型字符串。
 class DescriptorParser {
-  /// 将字段描述符（如 `Ljava/lang/String;`、`[[I`）解析为源码类型。
   static String parseFieldDescriptor(String descriptor) {
     final (type, _) = _parseType(descriptor, 0);
     return type;
@@ -102,4 +100,174 @@ class DescriptorParser {
     }
     return count;
   }
+}
+
+/// 解析 Java 泛型签名（Signature 属性）。
+/// 目前支持解析方法签名中的参数类型和返回类型。
+class SignatureParser {
+  final String _s;
+  int _pos = 0;
+
+  SignatureParser(this._s);
+
+  /// 解析方法签名，返回 `(参数类型列表, 返回类型)`。
+  static (List<String>, String) parseMethodSignature(String signature) {
+    return SignatureParser(signature)._parseMethodSignature();
+  }
+
+  (List<String>, String) _parseMethodSignature() {
+    // 可选的类型参数
+    if (_peek() == '<') {
+      _skipTypeParameters();
+    }
+    if (_peek() != '(') {
+      throw FormatException('Expected "(" in method signature: $_s');
+    }
+    _pos++; // '('
+    final params = <String>[];
+    while (_peek() != ')') {
+      params.add(_parseFieldTypeSignature());
+    }
+    _pos++; // ')'
+    final returnType = _parseReturnType();
+    // 忽略 throws 签名
+    return (params, returnType);
+  }
+
+  void _skipTypeParameters() {
+    if (_peek() != '<') return;
+    _pos++; // '<'
+    while (_peek() != '>') {
+      _parseIdentifier();
+      if (_peek() == ':') {
+        _pos++;
+        _parseFieldTypeSignature(); // class bound
+      }
+      while (_peek() == ':') {
+        _pos++;
+        _parseFieldTypeSignature();
+      }
+    }
+    _pos++; // '>'
+  }
+
+  String _parseReturnType() {
+    if (_peek() == 'V') {
+      _pos++;
+      return 'void';
+    }
+    return _parseFieldTypeSignature();
+  }
+
+  String _parseFieldTypeSignature() {
+    final c = _peek();
+    if (c == 'L') {
+      return _parseClassTypeSignature();
+    } else if (c == '[') {
+      _pos++;
+      return '${_parseFieldTypeSignature()}[]';
+    } else if (c == 'T') {
+      _pos++; // 'T'
+      final id = _parseIdentifier();
+      _expect(';');
+      return id;
+    } else {
+      throw FormatException(
+          'Unexpected char "$c" at $_pos in signature: $_s');
+    }
+  }
+
+  String _parseClassTypeSignature() {
+    _expect('L');
+    final parts = <_ClassTypePart>[];
+    while (true) {
+      final name = _parseIdentifier().replaceAll('/', '.');
+      String? args;
+      if (_peek() == '<') {
+        args = '<${_parseTypeArguments()}>';
+      }
+      parts.add(_ClassTypePart(name, args));
+      final c = _peek();
+      if (c == '.') {
+        _pos++;
+        continue;
+      } else if (c == ';') {
+        _pos++;
+        break;
+      } else {
+        throw FormatException(
+            'Expected "." or ";" at $_pos in signature: $_s');
+      }
+    }
+    final sb = StringBuffer();
+    for (var i = 0; i < parts.length; i++) {
+      if (i > 0) sb.write('.');
+      sb.write(parts[i].name);
+      if (parts[i].args != null) sb.write(parts[i].args);
+    }
+    return sb.toString();
+  }
+
+  String _parseTypeArguments() {
+    _expect('<');
+    final args = <String>[];
+    while (_peek() != '>') {
+      final c = _peek();
+      if (c == '*') {
+        _pos++;
+        args.add('?');
+      } else if (c == '+') {
+        _pos++;
+        args.add('? extends ${_parseFieldTypeSignature()}');
+      } else if (c == '-') {
+        _pos++;
+        args.add('? super ${_parseFieldTypeSignature()}');
+      } else {
+        args.add(_parseFieldTypeSignature());
+      }
+    }
+    _expect('>');
+    return args.join(', ');
+  }
+
+  String _parseIdentifier() {
+    final start = _pos;
+    while (_pos < _s.length && _isIdentifierChar(_s.codeUnitAt(_pos))) {
+      _pos++;
+    }
+    if (start == _pos) {
+      throw FormatException('Expected identifier at $_pos in signature: $_s');
+    }
+    return _s.substring(start, _pos);
+  }
+
+  bool _isIdentifierChar(int code) {
+    return (code >= 65 && code <= 90) || // A-Z
+        (code >= 97 && code <= 122) || // a-z
+        (code >= 48 && code <= 57) || // 0-9
+        code == 95 || // _
+        code == 36 || // $
+        code == 47; // /
+  }
+
+  String _peek() {
+    if (_pos >= _s.length) {
+      throw FormatException('Unexpected end of signature: $_s');
+    }
+    return _s[_pos];
+  }
+
+  void _expect(String expected) {
+    if (_peek() != expected) {
+      throw FormatException(
+          'Expected "$expected" at $_pos in signature: $_s');
+    }
+    _pos++;
+  }
+}
+
+class _ClassTypePart {
+  final String name;
+  final String? args;
+  _ClassTypePart(this.name, this.args);
 }

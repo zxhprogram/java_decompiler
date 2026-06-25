@@ -313,8 +313,18 @@ class Decompiler {
 
     final rawName = _pool.getString(method.nameIndex);
     final desc = _pool.getString(method.descriptorIndex);
-    final (paramTypes, returnType) =
-        DescriptorParser.parseMethodDescriptor(desc);
+    final sigAttr = method.attribute<SignatureAttribute>();
+    var (paramTypes, returnType) = DescriptorParser.parseMethodDescriptor(desc);
+    if (sigAttr != null) {
+      try {
+        (paramTypes, returnType) = SignatureParser.parseMethodSignature(
+          _pool.getString(sigAttr.signatureIndex),
+        );
+      } catch (_) {
+        // 泛型签名解析失败时回退到擦除类型
+      }
+    }
+    final isVarargs = (method.accessFlags & AccessFlags.ACC_VARARGS) != 0;
     final isStatic = (method.accessFlags & AccessFlags.ACC_STATIC) != 0;
     final isAbstract = (method.accessFlags & AccessFlags.ACC_ABSTRACT) != 0;
     final isNative = (method.accessFlags & AccessFlags.ACC_NATIVE) != 0;
@@ -328,7 +338,11 @@ class Decompiler {
     final params = _parameterNames(method, paramTypes.length, isStatic);
     for (var i = 0; i < paramTypes.length; i++) {
       if (i > 0) sb.write(', ');
-      sb.write('${paramTypes[i]} ${params[i]}');
+      var type = paramTypes[i];
+      if (isVarargs && i == paramTypes.length - 1 && type.endsWith('[]')) {
+        type = '${type.substring(0, type.length - 2)}...';
+      }
+      sb.write('$type ${params[i]}');
     }
     sb.write(')');
 

@@ -77,6 +77,8 @@ class CodePrinter {
     var text = _structureIfs(raw);
     text = _structureTryCatch(text, offsetToLine);
     text = _structureIfElse(text);
+    text = _structureForEach(text);
+    text = _structureWhileLoops(text);
     return text;
   }
 
@@ -293,31 +295,31 @@ class CodePrinter {
         case Opcodes.fload:
         case Opcodes.dload:
         case Opcodes.aload:
-          push(localNames[i.operands[0] as int] ?? 'lv${i.operands[0]}');
+          push(localNames[i.operands[0] as int] ?? 'p${i.operands[0]}');
         case Opcodes.iload_0 ||
               Opcodes.lload_0 ||
               Opcodes.fload_0 ||
               Opcodes.dload_0 ||
               Opcodes.aload_0:
-          push(localNames[0] ?? 'lv0');
+          push(localNames[0] ?? 'p0');
         case Opcodes.iload_1 ||
               Opcodes.lload_1 ||
               Opcodes.fload_1 ||
               Opcodes.dload_1 ||
               Opcodes.aload_1:
-          push(localNames[1] ?? 'lv1');
+          push(localNames[1] ?? 'p1');
         case Opcodes.iload_2 ||
               Opcodes.lload_2 ||
               Opcodes.fload_2 ||
               Opcodes.dload_2 ||
               Opcodes.aload_2:
-          push(localNames[2] ?? 'lv2');
+          push(localNames[2] ?? 'p2');
         case Opcodes.iload_3 ||
               Opcodes.lload_3 ||
               Opcodes.fload_3 ||
               Opcodes.dload_3 ||
               Opcodes.aload_3:
-          push(localNames[3] ?? 'lv3');
+          push(localNames[3] ?? 'p3');
         case Opcodes.iaload ||
               Opcodes.laload ||
               Opcodes.faload ||
@@ -466,7 +468,7 @@ class CodePrinter {
         case Opcodes.iinc:
           final slot = i.operands[0] as int;
           final inc = i.operands[1] as int;
-          out.writeln('        ${localNames[slot] ?? "lv$slot"} += $inc;');
+          out.writeln('        ${localNames[slot] ?? "p$slot"} += $inc;');
         case Opcodes.i2l ||
               Opcodes.i2f ||
               Opcodes.i2d ||
@@ -650,8 +652,10 @@ class CodePrinter {
 
     final lvt = _method.attribute<LocalVariableTableAttribute>();
     if (lvt != null) {
-      for (final e in lvt.localVariableTable) {
-        if (e.startPc == 0 && !names.containsKey(e.index)) {
+      final entries = List.of(lvt.localVariableTable)
+        ..sort((a, b) => a.startPc.compareTo(b.startPc));
+      for (final e in entries) {
+        if (!names.containsKey(e.index)) {
           names[e.index] = _pool.getString(e.nameIndex);
         }
       }
@@ -668,12 +672,39 @@ class CodePrinter {
     return names;
   }
 
+  /// 获取参数类型列表，优先使用泛型签名。
+  List<String> _parameterTypes() {
+    final descriptor = _pool.getString(_method.descriptorIndex);
+    final sigAttr = _method.attribute<SignatureAttribute>();
+    if (sigAttr != null) {
+      try {
+        final (params, _) = SignatureParser.parseMethodSignature(
+          _pool.getString(sigAttr.signatureIndex),
+        );
+        return params;
+      } catch (_) {
+        // 解析失败时回退到擦除类型
+      }
+    }
+    return DescriptorParser.parseMethodDescriptor(descriptor).$1;
+  }
+
   /// 推断每个局部变量槽在每次 store 指令时被写入的类型，用于输出类型声明。
   (List<String?>, List<int?>) _inferStoreTypes(List<Instruction> ins) {
     final storeTypes = List<String?>.filled(ins.length, null);
     final storeSlots = List<int?>.filled(ins.length, null);
     final localTypes = <int, String>{};
     final stack = <_TypedValue>[];
+
+    // 用参数类型初始化局部变量槽，使 aload 0 等能携带泛型类型信息。
+    final isStatic = (_method.accessFlags & AccessFlags.ACC_STATIC) != 0;
+    final paramTypes = _parameterTypes();
+    var slot = isStatic ? 0 : 1;
+    for (var pi = 0; pi < paramTypes.length; pi++) {
+      localTypes[slot] = paramTypes[pi];
+      slot++;
+      if (paramTypes[pi] == 'long' || paramTypes[pi] == 'double') slot++;
+    }
 
     _TypedValue pop() => stack.isEmpty ? _TypedValue('') : stack.removeLast();
     void push(_TypedValue v) => stack.add(v);
@@ -1432,7 +1463,7 @@ class CodePrinter {
   /// 根据异常表把 `try { ... } goto end; ... catch ... end:` 还原成 try/catch 块。
   String _structureTryCatch(String source, Map<int, int> offsetToLine) {
     final lines = source.split('\n');
-    final gotoRe = RegExp(r'^        goto (label_\d+);$');
+    final gotoRe = RegExp(r'^ {8,}goto (label_\d+);$');
     final labelRe = RegExp(r'^      (label_\d+):$');
     final exceptionRe =
         RegExp(r'^        (\S+(?:<[^>]+>)?) (\w+) = /\*exception\*/;$');
@@ -1685,6 +1716,186 @@ class CodePrinter {
           '$indent}',
         ];
         lines.replaceRange(i, endLine + 1, newLines);
+        changed = true;
+        break;
+      }
+    } while (changed);
+
+    return lines.join('\n');
+  }
+
+  /// 把典型的 `for (T e : arr)` 字节码模式还原为增强 for 循环。
+  /// 识别模式（label 形式）：
+  ///   arrVar = arrayExpr;
+  ///   int lenVar = arrVar.length;
+  ///   int idxVar = 0;
+  /// label_X:
+  ///   if (idxVar < lenVar) {
+  ///       T elemVar = arrVar[idxVar];
+  ///       body;
+  ///       idxVar += 1;
+  ///       goto label_X;
+  ///   }
+  String _structureForEach(String source) {
+    final lines = source.split('\n');
+    final labelRe = RegExp(r'^      (label_\d+):$');
+    final ifRe = RegExp(r'^        if \((\w+) < (\w+)\) \{$');
+    final initIdxRe = RegExp(r'^        int (\w+) = 0;$');
+    final initLenRe = RegExp(r'^        int (\w+) = (\w+)\.length;$');
+    final initArrRe = RegExp(r'^        (\S+) (\w+) = (.+);$');
+    final elemRe = RegExp(r'^        (\S+) (\w+) = (\w+)\[(\w+)\];$');
+    final incRe = RegExp(r'^        (\w+) \+= 1;$');
+    final gotoRe = RegExp(r'^ {8,}goto (label_\d+);$');
+
+    bool changed;
+    do {
+      changed = false;
+      for (var i = 0; i < lines.length; i++) {
+        final labelMatch = labelRe.firstMatch(lines[i]);
+        if (labelMatch == null) continue;
+        final label = labelMatch.group(1)!;
+
+        // label 下一行应为 if (idx < len) {
+        var ifLine = i + 1;
+        while (ifLine < lines.length && lines[ifLine].trim().isEmpty) ifLine++;
+        if (ifLine >= lines.length) continue;
+        final ifMatch = ifRe.firstMatch(lines[ifLine]);
+        if (ifMatch == null) continue;
+        final idxVar = ifMatch.group(1)!;
+        final lenVar = ifMatch.group(2)!;
+
+        // 找到 if 块结束
+        var depth = 1;
+        var closeIdx = ifLine + 1;
+        while (closeIdx < lines.length && depth > 0) {
+          final t = lines[closeIdx].trim();
+          if (t == '{') depth++;
+          if (t == '}') depth--;
+          closeIdx++;
+        }
+        if (depth != 0) continue;
+        closeIdx--; // 指向 '}' 行
+
+        // 块内第一条语句应为 elem = arr[idx]
+        var firstLine = ifLine + 1;
+        while (firstLine < closeIdx && lines[firstLine].trim().isEmpty)
+          firstLine++;
+        if (firstLine >= closeIdx) continue;
+        final elemMatch = elemRe.firstMatch(lines[firstLine]);
+        if (elemMatch == null) continue;
+        final elemType = elemMatch.group(1)!;
+        final elemVar = elemMatch.group(2)!;
+        final arrVar = elemMatch.group(3)!;
+        if (elemMatch.group(4) != idxVar) continue;
+
+        // 块内最后一条非空语句应为 idx += 1（倒数第二），最后一条为 goto label
+        var lastLine = closeIdx - 1;
+        while (lastLine > ifLine && lines[lastLine].trim().isEmpty) lastLine--;
+        final gotoMatch = gotoRe.firstMatch(lines[lastLine]);
+        if (gotoMatch == null || gotoMatch.group(1) != label) continue;
+
+        var incLine = lastLine - 1;
+        while (incLine > ifLine && lines[incLine].trim().isEmpty) incLine--;
+        final incMatch = incRe.firstMatch(lines[incLine]);
+        if (incMatch == null || incMatch.group(1) != idxVar) continue;
+
+        // label 前面应依次为 idx=0, len=arr.length, arr=arrayExpr
+        var idx0Line = i - 1;
+        while (idx0Line >= 0 && lines[idx0Line].trim().isEmpty) idx0Line--;
+        if (idx0Line < 0) continue;
+        final idx0Match = initIdxRe.firstMatch(lines[idx0Line]);
+        if (idx0Match == null || idx0Match.group(1) != idxVar) continue;
+
+        var lenLine = idx0Line - 1;
+        while (lenLine >= 0 && lines[lenLine].trim().isEmpty) lenLine--;
+        if (lenLine < 0) continue;
+        final lenMatch = initLenRe.firstMatch(lines[lenLine]);
+        if (lenMatch == null ||
+            lenMatch.group(1) != lenVar ||
+            lenMatch.group(2) != arrVar) continue;
+
+        var arrLine = lenLine - 1;
+        while (arrLine >= 0 && lines[arrLine].trim().isEmpty) arrLine--;
+        if (arrLine < 0) continue;
+        final arrMatch = initArrRe.firstMatch(lines[arrLine]);
+        if (arrMatch == null || arrMatch.group(2) != arrVar) continue;
+        final arrayExpr = arrMatch.group(3)!;
+
+        // 构造 for-each 体：去掉 elem 声明、idx += 1 和 goto
+        final bodyLines = lines
+            .sublist(firstLine + 1, incLine)
+            .where((l) => l.trim().isNotEmpty)
+            .toList();
+
+        final newLines = <String>[
+          '        for ($elemType $elemVar : $arrayExpr) {',
+          ...bodyLines.map((l) => '    $l'),
+          '        }',
+        ];
+        lines.replaceRange(arrLine, closeIdx + 1, newLines);
+        changed = true;
+        break;
+      }
+    } while (changed);
+
+    return lines.join('\n');
+  }
+
+  String _structureWhileLoops(String source) {
+    final lines = source.split('\n');
+    final labelRe = RegExp(r'^      (label_\d+):$');
+    final ifRe = RegExp(r'^        if \((.+)\) \{$');
+    final gotoRe = RegExp(r'^ {8,}goto (label_\d+);$');
+
+    bool changed;
+    do {
+      changed = false;
+      for (var i = 0; i < lines.length; i++) {
+        final labelMatch = labelRe.firstMatch(lines[i]);
+        if (labelMatch == null) continue;
+        final label = labelMatch.group(1)!;
+
+        // 紧跟 label 的下一行应为 `if (cond) {`
+        var j = i + 1;
+        while (j < lines.length && lines[j].trim().isEmpty) j++;
+        if (j >= lines.length) continue;
+        final ifMatch = ifRe.firstMatch(lines[j]);
+        if (ifMatch == null) continue;
+        final cond = ifMatch.group(1)!;
+
+        // 找到 `if` 块的结束 `}`
+        var depth = 1;
+        var k = j + 1;
+        while (k < lines.length && depth > 0) {
+          final t = lines[k].trim();
+          if (t == '{') depth++;
+          if (t == '}') depth--;
+          k++;
+        }
+        if (depth != 0) continue;
+        final closeIdx = k - 1;
+
+        // 块内最后一条非空语句应为 `goto label;`
+        var g = closeIdx - 1;
+        while (g > j && lines[g].trim().isEmpty) g--;
+        final gotoMatch = gotoRe.firstMatch(lines[g]);
+        if (gotoMatch == null || gotoMatch.group(1) != label) continue;
+
+        // 确保 label 只在本处定义和循环末尾被引用，避免破坏多重跳转
+        var labelRefs = 0;
+        for (var n = 0; n < lines.length; n++) {
+          if (n == i || n == g) continue;
+          if (lines[n].trim() == 'goto $label;' ||
+              lines[n].trim().startsWith('$label:')) {
+            labelRefs++;
+          }
+        }
+        if (labelRefs > 0) continue;
+
+        // 替换为 while 并删除 label 与 goto
+        lines[j] = '        while ($cond) {';
+        lines[i] = '';
+        lines[g] = '';
         changed = true;
         break;
       }
