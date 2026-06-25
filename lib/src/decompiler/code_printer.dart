@@ -1531,10 +1531,11 @@ class CodePrinter {
     return lines.join('\n');
   }
 
-  /// 把 `if (cond) goto else; then; goto end; else: else-body; end:` 还原成 if/else。
+  /// 把 if/else 的各种 goto 形式还原成标准的 if/else 块。
   String _structureIfElse(String source) {
     final lines = source.split('\n');
     final condGotoRe = RegExp(r'^( {8,})if \((.+)\) goto (label_\d+);$');
+    final openIfRe = RegExp(r'^( {8,})if \((.+)\) \{$');
     final gotoRe = RegExp(r'^ {8,}goto (label_\d+);$');
     final labelRe = RegExp(r'^ {6,}(label_\d+):$');
 
@@ -1547,6 +1548,82 @@ class CodePrinter {
         if (m != null) labelMap[m.group(1)!] = i;
       }
 
+      // 模式 B：`_structureIfs` 已经把条件分支包成了 if 块，但 then 分支末尾还
+      // 残留 `goto end;`，后面跟着 else 代码和 end 标号。
+      //   if (cond) {
+      //       thenBody;
+      //       goto end;
+      //   }
+      //   elseBody;
+      // end:
+      for (var i = lines.length - 1; i >= 0; i--) {
+        final open = openIfRe.firstMatch(lines[i]);
+        if (open == null) continue;
+        final indent = open.group(1)!;
+        final cond = open.group(2)!;
+
+        // 找到配对的右花括号。
+        int? closeLine;
+        var depth = 1;
+        for (var k = i + 1; k < lines.length; k++) {
+          if (lines[k].contains('{')) depth++;
+          if (lines[k].contains('}')) {
+            depth--;
+            if (depth == 0) {
+              closeLine = k;
+              break;
+            }
+          }
+        }
+        if (closeLine == null) continue;
+
+        // then 分支末尾的无条件 goto。
+        final gotoInBlockRe = RegExp(r'^' + indent + r'    goto (label_\d+);$');
+        int? gotoLine;
+        String? endLabel;
+        for (var k = closeLine - 1; k > i; k--) {
+          final gm = gotoInBlockRe.firstMatch(lines[k]);
+          if (gm != null) {
+            gotoLine = k;
+            endLabel = gm.group(1);
+            break;
+          }
+        }
+        if (gotoLine == null || endLabel == null) continue;
+
+        final endLine = labelMap[endLabel];
+        if (endLine == null || endLine <= closeLine) continue;
+
+        // endLabel 只能被这个 goto 引用。
+        var otherRefs = false;
+        for (var k = 0; k < lines.length; k++) {
+          if (k == gotoLine) continue;
+          if (lines[k].contains('goto $endLabel;')) {
+            otherRefs = true;
+            break;
+          }
+        }
+        if (otherRefs) continue;
+
+        final thenBody = lines.sublist(i + 1, gotoLine);
+        final elseBody = lines.sublist(closeLine + 1, endLine);
+        String bodyIndent(String l) => l.isEmpty ? l : '$indent    $l';
+        final newLines = <String>[
+          '${indent}if ($cond) {',
+          ...thenBody.map(bodyIndent),
+        ];
+        if (elseBody.any((l) => l.trim().isNotEmpty)) {
+          newLines.add('${indent}} else {');
+          newLines.addAll(elseBody.map(bodyIndent));
+        }
+        newLines.add('${indent}}');
+        lines.replaceRange(i, endLine + 1, newLines);
+        changed = true;
+        break;
+      }
+      if (changed) continue;
+
+      // 模式 A：原始的 `if (cond) goto else; then; goto end; else: else-body; end:`。
       for (var i = lines.length - 1; i >= 0; i--) {
         final cm = condGotoRe.firstMatch(lines[i]);
         if (cm == null) continue;
@@ -1556,7 +1633,6 @@ class CodePrinter {
         final elseLine = labelMap[elseLabel];
         if (elseLine == null || elseLine <= i) continue;
 
-        // then 分支结束处必须有一条无条件 goto 跳到 end。
         int? gotoLine;
         String? endLabel;
         for (var g = i + 1; g < elseLine; g++) {
@@ -1572,7 +1648,6 @@ class CodePrinter {
         final endLine = labelMap[endLabel];
         if (endLine == null || endLine <= elseLine) continue;
 
-        // then/else 体内不能有其它的标号，避免破坏更复杂结构。
         bool bodyHasLabel = false;
         for (var k = i + 1; k < gotoLine; k++) {
           if (labelRe.hasMatch(lines[k])) {
@@ -1589,7 +1664,6 @@ class CodePrinter {
         }
         if (bodyHasLabel) continue;
 
-        // elseLabel 只能被当前条件 goto 引用；endLabel 只能被 then 尾的 goto 引用。
         var otherRefs = false;
         for (var k = 0; k < lines.length; k++) {
           if (k == i) continue;
