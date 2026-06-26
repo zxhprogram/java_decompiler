@@ -78,12 +78,215 @@ class CodePrinter {
     var text = _structureTryCatch(raw, offsetToLine);
     text = _structureIfs(text);
     text = _structurePatternSwitch(text);
+    text = _structureSimpleSwitch(text);
     text = _structureIfElse(text);
     text = _structureForEach(text);
     text = _structureWhileLoops(text);
+    text = _structureForLoops(text);
+    text = _structureDoWhileLoops(text);
+    text = _structureArrayInit(text);
+    text = _cleanupBreakContinue(text);
+    text = _removeUnusedLabels(text);
+    text = _simplifyEmptyIfElse(text);
     text = _removeStackUnderflow(text);
     text = _restoreVariableNames(text);
     return text;
+  }
+
+  /// 简化 `if (!cond) { } else { body }` 为 `if (cond) { body }`
+  /// 以及 `if (cond) { } else { body }` 为 `if (!cond) { body }`
+  String _simplifyEmptyIfElse(String source) {
+    var lines = source.split('\n');
+    final ifOpenRe = RegExp(r'^(\s*)if \((.+)\) \{$');
+
+    // 逐字符追踪深度，返回使深度归零的行号（从 startLine 开始向后搜索）
+    // 如果该行在归零后还有 `{`，返回剩余部分（如 `else {`）
+    int? findCloseLine(List<String> ls, int startLine, int startDepth) {
+      var depth = startDepth;
+      for (var k = startLine; k < ls.length; k++) {
+        final line = ls[k];
+        var inString = false;
+        for (var ci = 0; ci < line.length; ci++) {
+          final c = line[ci];
+          final prev = ci > 0 ? line[ci - 1] : '';
+          if (c == '"' && prev != '\\') inString = !inString;
+          if (inString) continue;
+          if (c == '{') depth++;
+          if (c == '}') {
+            depth--;
+            if (depth == 0) return k;
+          }
+        }
+      }
+      return null;
+    }
+
+    bool changed;
+    do {
+      changed = false;
+      for (var i = 0; i < lines.length; i++) {
+        final m = ifOpenRe.firstMatch(lines[i]);
+        if (m == null) continue;
+        final indent = m.group(1)!;
+        final cond = m.group(2)!;
+
+        // 找到 then 块结束（深度回到 0）
+        final closeIdx = findCloseLine(lines, i + 1, 1);
+        if (closeIdx == null) continue;
+
+        // closeIdx 行包含使 then 块结束的 `}`，检查是否是 `} else {` 形式
+        final closeLine = lines[closeIdx].trim();
+        if (closeLine != '} else {') continue;
+
+        // then 块必须为空
+        final thenBody = lines.sublist(i + 1, closeIdx);
+        if (thenBody.any((l) => l.trim().isNotEmpty)) continue;
+
+        // 找到 else 块结束（从 closeIdx+1 开始，深度 1）
+        final elseClose = findCloseLine(lines, closeIdx + 1, 1);
+        if (elseClose == null) continue;
+
+        // else 块必须非空
+        final elseBody = lines.sublist(closeIdx + 1, elseClose);
+        if (!elseBody.any((l) => l.trim().isNotEmpty)) continue;
+
+        // 取反条件
+        final newCond = _negateCondition(cond);
+        final newLines = <String>[
+          '${indent}if ($newCond) {',
+          ...elseBody,
+          '${indent}}',
+        ];
+        lines.replaceRange(i, elseClose + 1, newLines);
+        changed = true;
+        break;
+      }
+    } while (changed);
+
+    return lines.join('\n');
+  }
+
+  /// 将循环体内的 `goto label_X;` 转换为 `break;` 或 `continue;`。
+  /// - 如果 label_X 在循环之后（end label），转换为 `break;`
+  /// - 如果 label_X 在循环之前（start label），转换为 `continue;`
+  String _cleanupBreakContinue(String source) {
+    var lines = source.split('\n');
+
+    final gotoRe = RegExp(r'^(\s*)goto (label_\d+);$');
+    final labelRe = RegExp(r'^(\s*)(label_\d+):$');
+    final loopStartRe = RegExp(r'^\s*(for|while|do)\b');
+    final loopEndRe = RegExp(r'^\s*\}\s*$');
+
+    bool changed;
+    do {
+      changed = false;
+      // 构建 label 位置映射
+      final labelPos = <String, int>{};
+      for (var i = 0; i < lines.length; i++) {
+        final m = labelRe.firstMatch(lines[i]);
+        if (m != null) labelPos[m.group(2)!] = i;
+      }
+
+      for (var i = 0; i < lines.length; i++) {
+        final gm = gotoRe.firstMatch(lines[i]);
+        if (gm == null) continue;
+        final indent = gm.group(1)!;
+        final target = gm.group(2)!;
+        final targetPos = labelPos[target];
+        if (targetPos == null) continue;
+
+        // 找到包含此 goto 的最内层循环
+        // 向上查找循环开始
+        int? loopStartLine;
+        var depth = 0;
+        for (var k = i - 1; k >= 0; k--) {
+          final t = lines[k].trim();
+          if (t == '}') depth++;
+          if (t == '{' || t.endsWith('{')) {
+            if (depth > 0) {
+              depth--;
+            } else {
+              // 这是包含 goto 的块的开始
+              // 检查是否是循环
+              if (loopStartRe.hasMatch(lines[k])) {
+                loopStartLine = k;
+                break;
+              }
+            }
+          }
+        }
+
+        if (loopStartLine == null) continue;
+
+        // 如果 target 在循环之后，是 break
+        if (targetPos > loopStartLine) {
+          // 确认 target 在循环结束之后
+          // 找循环结束
+          var d = 1;
+          var end = loopStartLine + 1;
+          while (end < lines.length && d > 0) {
+            final t = lines[end].trim();
+            if (t == '{' || t.endsWith('{')) d++;
+            if (t == '}') d--;
+            end++;
+          }
+          if (targetPos >= end) {
+            lines[i] = '${indent}break;';
+            changed = true;
+            break;
+          }
+        }
+
+        // 如果 target 在循环之前，是 continue
+        if (targetPos < loopStartLine) {
+          lines[i] = '${indent}continue;';
+          changed = true;
+          break;
+        }
+      }
+    } while (changed);
+
+    return lines.join('\n');
+  }
+
+  /// 移除未被引用的 label 行
+  String _removeUnusedLabels(String source) {
+    var lines = source.split('\n');
+    final labelRe = RegExp(r'^(\s*)(label_\d+):$');
+    final gotoRe = RegExp(r'\bgoto (label_\d+);');
+
+    bool changed;
+    do {
+      changed = false;
+      // 收集所有被引用的 label
+      final referenced = <String>{};
+      for (final line in lines) {
+        for (final m in gotoRe.allMatches(line)) {
+          referenced.add(m.group(1)!);
+        }
+      }
+      // 移除未被引用的 label 行（置空，不删除行以保持行号）
+      for (var i = 0; i < lines.length; i++) {
+        final m = labelRe.firstMatch(lines[i]);
+        if (m == null) continue;
+        final label = m.group(2)!;
+        if (!referenced.contains(label)) {
+          lines[i] = '';
+          changed = true;
+        }
+      }
+    } while (changed);
+
+    // 仅移除连续空行中的多余空行（保留单个空行分隔）
+    final result = <String>[];
+    var prevEmpty = false;
+    for (final line in lines) {
+      final isEmpty = line.trim().isEmpty;
+      if (isEmpty && prevEmpty) continue;
+      result.add(line);
+      prevEmpty = isEmpty;
+    }
+    return result.join('\n');
   }
 
   String _removeStackUnderflow(String source) {
@@ -207,7 +410,20 @@ class CodePrinter {
           i.opcode == Opcodes.tableswitch ||
           i.opcode == Opcodes.lookupswitch) {
         for (final op in i.operands) {
-          if (op is int && op >= 0 && op <= _code.code.length) labels.add(op);
+          if (op is int && op >= 0 && op <= _code.code.length) {
+            labels.add(op);
+          } else if (op is List<int>) {
+            for (final o in op) {
+              if (o >= 0 && o <= _code.code.length) labels.add(o);
+            }
+          } else if (op is List<(int, int)>) {
+            for (final pair in op) {
+              final target = pair.$2;
+              if (target >= 0 && target <= _code.code.length) {
+                labels.add(target);
+              }
+            }
+          }
         }
       }
     }
@@ -1358,6 +1574,7 @@ class CodePrinter {
     }
 
     // 反向传播：把 null/未知赋值后续的实际类型补回来。
+    // 注意：只在类型兼容时传播，避免把 boolean 反向传播到 int 类型的 store。
     final bySlot = <int, List<int>>{};
     for (var idx = 0; idx < ins.length; idx++) {
       final s = storeSlots[idx];
@@ -1369,7 +1586,13 @@ class CodePrinter {
         final idx = indices[k];
         final t = storeTypes[idx];
         if (t != null && t.isNotEmpty) {
-          pending = t;
+          // 切换 pending 类型时，避免不兼容类型的反向覆盖
+          // （如 int 变量后续被复用为 boolean，不应把前面的 int 改成 boolean）
+          if (pending.isEmpty ||
+              _typesCompatible(t, pending) ||
+              _typesCompatible(pending, t)) {
+            pending = t;
+          }
         } else if (pending.isNotEmpty) {
           storeTypes[idx] = pending;
         }
@@ -1377,10 +1600,12 @@ class CodePrinter {
     }
 
     // 根据 ifeq/ifne 的用法把相关 int 局部变量推断为 boolean。
-    final booleanSlots = <int>{};
+    // 仅当变量从未在 if_icmp* 等数值比较中使用、且至少有一次用于 ifeq/ifne 时才推断为 boolean。
+    // 这样避免把用于 if_icmpge/if_icmple 等比较的 int 变量误判为 boolean。
+    final booleanCandidateSlots = <int>{};
+    final intComparisonSlots = <int>{};
     for (var idx = 0; idx < ins.length - 1; idx++) {
       final next = ins[idx + 1];
-      if (next.opcode != Opcodes.ifeq && next.opcode != Opcodes.ifne) continue;
       final op = ins[idx].opcode;
       final slot = switch (op) {
         Opcodes.iload_0 => 0,
@@ -1390,8 +1615,34 @@ class CodePrinter {
         Opcodes.iload => ins[idx].operands[0] as int,
         _ => null,
       };
-      if (slot != null) booleanSlots.add(slot);
+      if (slot == null) continue;
+      if (next.opcode == Opcodes.ifeq || next.opcode == Opcodes.ifne) {
+        booleanCandidateSlots.add(slot);
+      }
+      // if_icmp* 指令前会有两个 iload，这些 slot 是数值比较变量
+      if (next.opcode == Opcodes.if_icmpeq ||
+          next.opcode == Opcodes.if_icmpne ||
+          next.opcode == Opcodes.if_icmplt ||
+          next.opcode == Opcodes.if_icmpge ||
+          next.opcode == Opcodes.if_icmpgt ||
+          next.opcode == Opcodes.if_icmple) {
+        intComparisonSlots.add(slot);
+        // 前一个 iload 的 slot 也是数值比较变量
+        if (idx > 0) {
+          final prevOp = ins[idx - 1].opcode;
+          final prevSlot = switch (prevOp) {
+            Opcodes.iload_0 => 0,
+            Opcodes.iload_1 => 1,
+            Opcodes.iload_2 => 2,
+            Opcodes.iload_3 => 3,
+            Opcodes.iload => ins[idx - 1].operands[0] as int,
+            _ => null,
+          };
+          if (prevSlot != null) intComparisonSlots.add(prevSlot);
+        }
+      }
     }
+    final booleanSlots = booleanCandidateSlots.difference(intComparisonSlots);
     for (var idx = 0; idx < ins.length; idx++) {
       final s = storeSlots[idx];
       if (s != null && booleanSlots.contains(s)) {
@@ -1481,6 +1732,17 @@ class CodePrinter {
   }
 
   String _negateCondition(String cond) {
+    final trimmed = cond.trim();
+    // !!expr -> expr
+    if (trimmed.startsWith('!(') && trimmed.endsWith(')')) {
+      final inner = trimmed.substring(2, trimmed.length - 1);
+      // 如果内部也是 !(...)，则双重否定
+      final innerNeg = _negateCondition(inner);
+      return innerNeg;
+    }
+    // !var -> var
+    final notVar = RegExp(r'^!(\w+)$').firstMatch(trimmed);
+    if (notVar != null) return notVar.group(1)!;
     final eq0 = RegExp(r'^(.+) == 0$').firstMatch(cond);
     if (eq0 != null) return eq0.group(1)!.trim();
     final ne0 = RegExp(r'^(.+) != 0$').firstMatch(cond);
@@ -1687,7 +1949,8 @@ class CodePrinter {
 
         final thenBody = lines.sublist(i + 1, gotoLine);
         final elseBody = lines.sublist(closeLine + 1, endLine);
-        String bodyIndent(String l) => l.isEmpty ? l : '$indent    $l';
+        String bodyIndent(String l) =>
+            l.isEmpty ? l : '$indent    ${l.trimLeft()}';
         final newLines = <String>[
           '${indent}if ($cond) {',
           ...thenBody.map(bodyIndent),
@@ -1764,7 +2027,8 @@ class CodePrinter {
 
         final thenBody = lines.sublist(i + 1, gotoLine);
         final elseBody = lines.sublist(elseLine + 1, endLine);
-        String bodyIndent(String l) => l.isEmpty ? l : '$indent    $l';
+        String bodyIndent(String l) =>
+            l.isEmpty ? l : '$indent    ${l.trimLeft()}';
         final newLines = <String>[
           '${indent}if (${_negateCondition(cond)}) {',
           ...thenBody.map(bodyIndent),
@@ -1917,6 +2181,7 @@ class CodePrinter {
     final lines = source.split('\n');
     final labelRe = RegExp(r'^      (label_\d+):$');
     final ifRe = RegExp(r'^        if \((.+)\) \{$');
+    final ifGotoRe = RegExp(r'^        if \((.+)\) goto (label_\d+);$');
     final gotoRe = RegExp(r'^ {8,}goto (label_\d+);$');
 
     bool changed;
@@ -1927,51 +2192,467 @@ class CodePrinter {
         if (labelMatch == null) continue;
         final label = labelMatch.group(1)!;
 
-        // 紧跟 label 的下一行应为 `if (cond) {`
+        // 紧跟 label 的下一行应为 `if (cond) {` 或 `if (cond) goto exit;`
         var j = i + 1;
         while (j < lines.length && lines[j].trim().isEmpty) {
           j++;
         }
         if (j >= lines.length) continue;
-        final ifMatch = ifRe.firstMatch(lines[j]);
-        if (ifMatch == null) continue;
-        final cond = ifMatch.group(1)!;
 
-        // 找到 `if` 块的结束 `}`
+        // 模式 A：`if (cond) {` 形式（已由 _structureIfs 转换）
+        final ifMatch = ifRe.firstMatch(lines[j]);
+        if (ifMatch != null) {
+          final cond = ifMatch.group(1)!;
+
+          // 找到 `if` 块的结束 `}`
+          var depth = 1;
+          var k = j + 1;
+          while (k < lines.length && depth > 0) {
+            final t = lines[k].trim();
+            if (t == '{') depth++;
+            if (t == '}') depth--;
+            k++;
+          }
+          if (depth != 0) continue;
+          final closeIdx = k - 1;
+
+          // 块内最后一条非空语句应为 `goto label;`
+          var g = closeIdx - 1;
+          while (g > j && lines[g].trim().isEmpty) {
+            g--;
+          }
+          final gotoMatch = gotoRe.firstMatch(lines[g]);
+          if (gotoMatch == null || gotoMatch.group(1) != label) continue;
+
+          // 确保 label 只在本处定义和循环末尾被引用，避免破坏多重跳转
+          var labelRefs = 0;
+          for (var n = 0; n < lines.length; n++) {
+            if (n == i || n == g) continue;
+            if (lines[n].trim() == 'goto $label;' ||
+                lines[n].trim().startsWith('$label:')) {
+              labelRefs++;
+            }
+          }
+          if (labelRefs > 0) continue;
+
+          // 替换为 while 并删除 label 与 goto
+          lines[j] = '        while ($cond) {';
+          lines[i] = '';
+          lines[g] = '';
+          changed = true;
+          break;
+        }
+
+        // 模式 B：`if (cond) goto exit;` 形式（典型 while 循环前置条件跳转）
+        final ifGotoMatch = ifGotoRe.firstMatch(lines[j]);
+        if (ifGotoMatch != null) {
+          final cond = ifGotoMatch.group(1)!;
+          final exitLabel = ifGotoMatch.group(2)!;
+
+          // 收集 body：从 j+1 到下一个 `goto label;`（回到循环头）
+          var g = j + 1;
+          int? gotoEnd;
+          while (g < lines.length) {
+            final gm = gotoRe.firstMatch(lines[g]);
+            if (gm != null && gm.group(1) == label) {
+              gotoEnd = g;
+              break;
+            }
+            // 遇到其他 label 表示结构不匹配
+            if (labelRe.hasMatch(lines[g])) break;
+            g++;
+          }
+          if (gotoEnd == null) continue;
+
+          // 确保 label 只在本处定义和循环末尾被引用
+          var labelRefs = 0;
+          for (var n = 0; n < lines.length; n++) {
+            if (n == i || n == gotoEnd) continue;
+            if (lines[n].trim() == 'goto $label;' ||
+                lines[n].trim().startsWith('$label:')) {
+              labelRefs++;
+            }
+          }
+          if (labelRefs > 0) continue;
+
+          // body 为 j+1 到 gotoEnd（不含），需要取反条件
+          final bodyLines = lines
+              .sublist(j + 1, gotoEnd)
+              .where((l) => l.trim().isNotEmpty)
+              .toList();
+          final negCond = _negateCondition(cond);
+
+          // 基于 while 行的缩进 + 4 作为 body 缩进
+          final whileIndent = '        '; // while 行固定 8 空格
+          final indentedBody = _reindentBlock(bodyLines, '            ');
+
+          final newLines = <String>[
+            '${whileIndent}while ($negCond) {',
+            ...indentedBody,
+            '${whileIndent}}',
+          ];
+          // 找到 exit label 位置，如果它在 gotoEnd 后紧邻且未被其他地方引用，
+          // 一并移除（它通常是循环结束后的下一条语句标号）
+          int replaceEnd = gotoEnd + 1;
+          final exitLabelLine = _findLabelLine(lines, exitLabel);
+          if (exitLabelLine != null && exitLabelLine > gotoEnd) {
+            // 检查 exit label 是否只被这一处 if goto 引用
+            var exitRefs = 0;
+            for (var n = 0; n < lines.length; n++) {
+              if (n == exitLabelLine) continue;
+              if (lines[n].contains('goto $exitLabel;')) exitRefs++;
+            }
+            if (exitRefs == 0 && exitLabelLine == gotoEnd + 1) {
+              replaceEnd = exitLabelLine + 1;
+            }
+          }
+          lines.replaceRange(i, replaceEnd, newLines);
+          changed = true;
+          break;
+        }
+      }
+    } while (changed);
+
+    return lines.join('\n');
+  }
+
+  int? _findLabelLine(List<String> lines, String label) {
+    final labelRe = RegExp(r'^      (label_\d+):$');
+    for (var i = 0; i < lines.length; i++) {
+      final m = labelRe.firstMatch(lines[i]);
+      if (m != null && m.group(1) == label) return i;
+    }
+    return null;
+  }
+
+  /// 把 `int p = 0; while (p < N) { ...; p += 1; }` 还原成
+  /// `for (int p = 0; p < N; p++) { ... }`。也支持 >= 形式（取反条件）。
+  /// 同时处理 label 形式的 for 循环：
+  ///   idxVar = 0;
+  /// label_X:
+  ///   if (idxVar >= N) goto label_END;
+  ///   body;
+  /// label_INC:
+  ///   idxVar += 1;
+  ///   goto label_X;
+  /// label_END:
+  String _structureForLoops(String source) {
+    var lines = source.split('\n');
+
+    final initRe = RegExp(r'^        (?:\S+(?:\[\])*\s+)?(\w+) = 0;$');
+    final whileRe = RegExp(r'^        while \((\w+) (<|>=) ([^)]+)\) \{$');
+    final incRe = RegExp(r'^            (\w+) \+= 1;$');
+    final labelRe = RegExp(r'^      (label_\d+):$');
+    final ifGotoRe =
+        RegExp(r'^        if \((\w+) (>=|<) ([^)]+)\) goto (label_\d+);$');
+    final gotoRe = RegExp(r'^        goto (label_\d+);$');
+    final incLabelRe = RegExp(r'^        (\w+) \+= 1;$');
+
+    bool changed;
+    do {
+      changed = false;
+
+      // 模式 A：while 形式的 for 循环
+      var found = false;
+      for (var i = 0; i < lines.length && !found; i++) {
+        final wm = whileRe.firstMatch(lines[i]);
+        if (wm == null) continue;
+        final idxVar = wm.group(1)!;
+        final op = wm.group(2)!;
+        final bound = wm.group(3)!;
+
+        // 找到 while 块结束
         var depth = 1;
-        var k = j + 1;
-        while (k < lines.length && depth > 0) {
-          final t = lines[k].trim();
+        var closeIdx = i + 1;
+        while (closeIdx < lines.length && depth > 0) {
+          final t = lines[closeIdx].trim();
           if (t == '{') depth++;
           if (t == '}') depth--;
-          k++;
+          closeIdx++;
         }
         if (depth != 0) continue;
-        final closeIdx = k - 1;
+        closeIdx--;
 
-        // 块内最后一条非空语句应为 `goto label;`
-        var g = closeIdx - 1;
-        while (g > j && lines[g].trim().isEmpty) {
-          g--;
+        // 块内最后一条非空语句应为 idxVar += 1
+        var incLine = closeIdx - 1;
+        while (incLine > i && lines[incLine].trim().isEmpty) {
+          incLine--;
         }
-        final gotoMatch = gotoRe.firstMatch(lines[g]);
-        if (gotoMatch == null || gotoMatch.group(1) != label) continue;
+        final im = incRe.firstMatch(lines[incLine]);
+        if (im == null || im.group(1) != idxVar) continue;
 
-        // 确保 label 只在本处定义和循环末尾被引用，避免破坏多重跳转
-        var labelRefs = 0;
-        for (var n = 0; n < lines.length; n++) {
-          if (n == i || n == g) continue;
-          if (lines[n].trim() == 'goto $label;' ||
-              lines[n].trim().startsWith('$label:')) {
-            labelRefs++;
+        // while 前一条非空语句应为 idxVar = 0
+        var initLine = i - 1;
+        while (initLine >= 0 && lines[initLine].trim().isEmpty) {
+          initLine--;
+        }
+        if (initLine < 0) continue;
+        final im2 = initRe.firstMatch(lines[initLine]);
+        if (im2 == null || im2.group(1) != idxVar) continue;
+        // 去掉末尾分号，for 语句会自己加
+        var initDecl = lines[initLine].trim();
+        if (initDecl.endsWith(';')) {
+          initDecl = initDecl.substring(0, initDecl.length - 1);
+        }
+
+        final cond = op == '<' ? '$idxVar < $bound' : '$idxVar >= $bound';
+        final bodyLines = lines
+            .sublist(i + 1, incLine)
+            .where((l) => l.trim().isNotEmpty)
+            .toList();
+        // 重新缩进 body，保留相对缩进
+        final indentedBody = _reindentBlock(bodyLines, '            ');
+
+        final newLines = <String>[
+          '        for ($initDecl; $cond; ${idxVar}++) {',
+          ...indentedBody,
+          '        }',
+        ];
+        lines.replaceRange(initLine, closeIdx + 1, newLines);
+        changed = true;
+        found = true;
+      }
+
+      if (changed) continue;
+
+      // 模式 B：label 形式的 for 循环
+      // label_X:
+      //   if (idxVar >= N) goto label_END;
+      //   body;
+      // label_INC:
+      //   idxVar += 1;
+      //   goto label_X;
+      // label_END:
+      final labelMap = <String, int>{};
+      for (var i = 0; i < lines.length; i++) {
+        final m = labelRe.firstMatch(lines[i]);
+        if (m != null) labelMap[m.group(1)!] = i;
+      }
+
+      for (var i = 0; i < lines.length && !found; i++) {
+        final lm = labelRe.firstMatch(lines[i]);
+        if (lm == null) continue;
+        final startLabel = lm.group(1)!;
+
+        // 下一行应为 if (idxVar op N) goto label_END;
+        var j = i + 1;
+        while (j < lines.length && lines[j].trim().isEmpty) {
+          j++;
+        }
+        if (j >= lines.length) continue;
+        final ifm = ifGotoRe.firstMatch(lines[j]);
+        if (ifm == null) continue;
+        final idxVar = ifm.group(1)!;
+        final op = ifm.group(2)!;
+        final bound = ifm.group(3)!;
+        final endLabel = ifm.group(4)!;
+
+        final endLabelLine = labelMap[endLabel];
+        if (endLabelLine == null || endLabelLine <= j) continue;
+
+        // 在 j+1 到 endLabelLine 之间找 `idxVar += 1; goto startLabel;` 模式
+        // 通常是: label_INC: idxVar += 1; goto startLabel;
+        int? incLabelLine;
+        int? incLine;
+        int? gotoLine;
+        for (var k = j + 1; k < endLabelLine - 2; k++) {
+          final lm2 = labelRe.firstMatch(lines[k]);
+          if (lm2 == null) continue;
+          // 检查后续两行是否为 idxVar += 1; goto startLabel;
+          final incMatch = incLabelRe.firstMatch(lines[k + 1]);
+          final gotoMatch = gotoRe.firstMatch(lines[k + 2]);
+          if (incMatch != null &&
+              incMatch.group(1) == idxVar &&
+              gotoMatch != null &&
+              gotoMatch.group(1) == startLabel) {
+            incLabelLine = k;
+            incLine = k + 1;
+            gotoLine = k + 2;
+            break;
           }
         }
-        if (labelRefs > 0) continue;
+        if (incLabelLine == null) continue;
 
-        // 替换为 while 并删除 label 与 goto
-        lines[j] = '        while ($cond) {';
-        lines[i] = '';
-        lines[g] = '';
+        // 找到 init: idxVar = 0; 在 label 前
+        var initLine = i - 1;
+        while (initLine >= 0 && lines[initLine].trim().isEmpty) {
+          initLine--;
+        }
+        if (initLine < 0) continue;
+        final im2 = initRe.firstMatch(lines[initLine]);
+        if (im2 == null || im2.group(1) != idxVar) continue;
+        var initDecl = lines[initLine].trim();
+        if (initDecl.endsWith(';')) {
+          initDecl = initDecl.substring(0, initDecl.length - 1);
+        }
+
+        // 确保 startLabel 只在 incLine 处被 goto 引用
+        var startLabelRefs = 0;
+        for (var n = 0; n < lines.length; n++) {
+          if (n == i) continue;
+          if (lines[n].contains('goto $startLabel;')) startLabelRefs++;
+        }
+        if (startLabelRefs != 1) continue;
+
+        // 确保 endLabel 只在循环体内被 goto 引用（作为 break），不在循环体外被引用
+        var endLabelRefs = 0;
+        for (var n = 0; n < lines.length; n++) {
+          if (n == j) continue;
+          if (n > j && n < incLabelLine!) continue; // 循环体内的 break
+          if (n >= incLabelLine && n <= gotoLine!) continue; // inc 部分
+          if (lines[n].contains('goto $endLabel;')) endLabelRefs++;
+        }
+        if (endLabelRefs > 0) continue;
+
+        // body 为 j+1 到 incLabelLine（不含）
+        final bodyLines = lines
+            .sublist(j + 1, incLabelLine)
+            .where((l) => l.trim().isNotEmpty)
+            .toList();
+        final indentedBody = _reindentBlock(bodyLines, '            ');
+
+        // 条件取反：if (idxVar >= N) goto end -> while (idxVar < N)
+        final cond = op == '>=' ? '$idxVar < $bound' : '$idxVar >= $bound';
+
+        final newLines = <String>[
+          '        for ($initDecl; $cond; ${idxVar}++) {',
+          ...indentedBody,
+          '        }',
+        ];
+        // 替换范围：initLine 到 endLabelLine（不含 endLabelLine 本身）
+        lines.replaceRange(initLine, endLabelLine, newLines);
+        changed = true;
+        found = true;
+      }
+    } while (changed);
+
+    return lines.join('\n');
+  }
+
+  /// 把 `do { body; } while (cond);` 还原。
+  /// 识别模式（label 形式）：
+  ///   label_X:
+  ///     body;
+  ///     if (cond) goto label_X;
+  String _structureDoWhileLoops(String source) {
+    var lines = source.split('\n');
+
+    final labelRe = RegExp(r'^      (label_\d+):$');
+    final condGotoRe = RegExp(r'^        if \((.+)\) goto (label_\d+);$');
+
+    bool changed;
+    do {
+      changed = false;
+      final labelMap = <String, int>{};
+      for (var i = 0; i < lines.length; i++) {
+        final m = labelRe.firstMatch(lines[i]);
+        if (m != null) labelMap[m.group(1)!] = i;
+      }
+
+      for (var i = 0; i < lines.length; i++) {
+        final cm = condGotoRe.firstMatch(lines[i]);
+        if (cm == null) continue;
+        final cond = cm.group(1)!;
+        final target = cm.group(2)!;
+        final labelLine = labelMap[target];
+        if (labelLine == null || labelLine >= i) continue;
+
+        // 确保 target label 只被这一处 goto 引用
+        var refs = 0;
+        for (var k = 0; k < lines.length; k++) {
+          if (k == labelLine) continue;
+          if (lines[k].contains('goto $target;')) refs++;
+        }
+        if (refs != 1) continue;
+
+        // body 为 labelLine+1 到 i（不含）
+        final bodyLines = lines
+            .sublist(labelLine + 1, i)
+            .where((l) => l.trim().isNotEmpty)
+            .toList();
+        if (bodyLines.isEmpty) continue;
+
+        // 重新缩进 body
+        final newLines = <String>[
+          '        do {',
+          ...bodyLines.map((l) {
+            final t = l.trimLeft();
+            return '            $t';
+          }),
+          '        } while ($cond);',
+        ];
+        lines.replaceRange(labelLine, i + 1, newLines);
+        changed = true;
+        break;
+      }
+    } while (changed);
+
+    return lines.join('\n');
+  }
+
+  /// 把 `new T[N][i] = v;` 形式的数组初始化还原为数组字面量
+  /// `T[] var = {v1, v2, ...};`。需要后面跟着 `T[] var = new T[N];` 形式的赋值。
+  String _structureArrayInit(String source) {
+    var lines = source.split('\n');
+
+    // 匹配 new int[5][0] = 1; 形式
+    final storeRe = RegExp(r'^        new (\S+)\[(\d+)\]\[(\d+)\] = (.+);$');
+    // 匹配 int[] p0 = new int[5]; 形式
+    final declRe = RegExp(r'^        (\S+\[\]) (\w+) = new (\S+)\[(\d+)\];$');
+
+    bool changed;
+    do {
+      changed = false;
+
+      // 收集连续的 new T[N][i] = v; 块
+      for (var i = 0; i < lines.length; i++) {
+        final sm = storeRe.firstMatch(lines[i]);
+        if (sm == null) continue;
+        final type = sm.group(1)!;
+        final size = int.parse(sm.group(2)!);
+        final firstIdx = int.parse(sm.group(3)!);
+
+        // 收集从 i 开始的连续 store 行
+        final values = <int, String>{};
+        var end = i;
+        for (var k = i; k < lines.length; k++) {
+          final m = storeRe.firstMatch(lines[k]);
+          if (m == null) break;
+          if (m.group(1) != type || int.parse(m.group(2)!) != size) break;
+          values[int.parse(m.group(3)!)] = m.group(4)!;
+          end = k;
+        }
+
+        // 必须从 0 开始且数量与 size 匹配
+        if (!values.containsKey(firstIdx) || firstIdx != 0) continue;
+        if (values.length != size) continue;
+
+        // end+1 处应为 T[] var = new T[N];
+        var declLine = end + 1;
+        while (declLine < lines.length && lines[declLine].trim().isEmpty) {
+          declLine++;
+        }
+        if (declLine >= lines.length) continue;
+        final dm = declRe.firstMatch(lines[declLine]);
+        if (dm == null) continue;
+        // declRe: group1=declType(e.g. int[]), group2=varName, group3=newType(e.g. int), group4=size
+        final declType = dm.group(1)!; // e.g. int[]
+        final varName = dm.group(2)!;
+        final newType = dm.group(3)!; // e.g. int
+        final newSize = int.parse(dm.group(4)!);
+        // 校验：newType 应与 type 一致（去掉 [] 后），size 应一致
+        if (declType != '$newType[]') continue;
+        if (newType != type) continue;
+        if (newSize != size) continue;
+
+        // 构建数组字面量
+        final elems = <String>[];
+        for (var k = 0; k < size; k++) {
+          elems.add(values[k]!);
+        }
+        final elemsStr = elems.join(', ');
+        final newLine = '        $declType $varName = { $elemsStr };';
+        lines.replaceRange(i, declLine + 1, [newLine]);
         changed = true;
         break;
       }
@@ -2314,44 +2995,52 @@ class CodePrinter {
 
     // 4. 把 switch 后的代码切分成每个 case 的处理块
     // 每个 case 以模式变量声明开头：Type var = ((Type) selector);
-    final blockStartRe = RegExp(r'^        (\S+(?:<[^>]+>)?) \w+ = \(\(');
+    // 注意：switch 的 case 目标 label 现在会被打印出来，需要基于 label 定位。
     final anyLabelRe = RegExp(r'^      (label_\d+):$');
 
-    bool isNewBlockStart(int idx) {
-      return blockStartRe.hasMatch(lines[idx]);
+    // 建立 label -> 行号 映射
+    final labelLineMap = <String, int>{};
+    for (var i = switchCloseLine + 1; i < lines.length; i++) {
+      final lm = anyLabelRe.firstMatch(lines[i]);
+      if (lm != null) {
+        labelLineMap[lm.group(1)!] = i;
+      }
     }
 
-    final blockStarts = <int>[switchCloseLine + 1];
+    // 对每个 case，找到其 label 后的第一个非空行作为 block start
+    final blockStarts = <int>[];
+    for (final c in cases) {
+      final labelLine = labelLineMap[c.label];
+      if (labelLine == null) return source;
+      var bs = labelLine + 1;
+      while (bs < lines.length && lines[bs].trim().isEmpty) {
+        bs++;
+      }
+      if (bs >= lines.length) return source;
+      blockStarts.add(bs);
+    }
+
+    // default block
     int? defaultStartLine;
     int? exceptionStartLine;
-    for (var i = switchCloseLine + 1; i < lines.length; i++) {
-      final line = lines[i];
-      if (line.trim().isEmpty) continue;
-      final lm = anyLabelRe.firstMatch(line);
-      if (lm != null) {
-        final name = lm.group(1)!;
-        if (name == defaultLabel) {
-          defaultStartLine = i;
-          break;
-        }
+    final defaultLabelLine = labelLineMap[defaultLabel];
+    if (defaultLabelLine != null) {
+      var dl = defaultLabelLine + 1;
+      while (dl < lines.length && lines[dl].trim().isEmpty) {
+        dl++;
       }
-      if (i != switchCloseLine + 1 && isNewBlockStart(i)) {
-        blockStarts.add(i);
-      }
-    }
-
-    if (cases.length != blockStarts.length) {
-      return source;
-    }
-
-    // 找到异常处理块 label_312（默认是 default 后的下一个 label）
-    if (defaultStartLine != null) {
-      for (var i = defaultStartLine + 1; i < lines.length; i++) {
+      defaultStartLine = dl;
+      // 找到 default 后的下一个 label（异常处理块）
+      for (var i = defaultLabelLine + 1; i < lines.length; i++) {
         if (anyLabelRe.hasMatch(lines[i])) {
           exceptionStartLine = i;
           break;
         }
       }
+    }
+
+    if (cases.length != blockStarts.length) {
+      return source;
     }
 
     // 5. 逐个处理块，生成 case 子句
@@ -2394,6 +3083,192 @@ class CodePrinter {
     // 7. 替换区域：把整个 pattern switch 生成的状态机替换为新的 switch 表达式
     lines.replaceRange(headerStart, lines.length, newSwitch);
     return '${lines.join('\n')}\n';
+  }
+
+  /// 把 `switch (var) { case N: goto label_X; ... }` 形式的字节码还原成
+  /// 结构化的 switch-case 语句。仅处理每个 case 体都以 return/throw 结束、
+  /// 不存在 fallthrough 的简单情形。
+  String _structureSimpleSwitch(String source) {
+    var lines = source.split('\n');
+
+    final switchOpenRe = RegExp(r'^( {8,})switch \(([^)]+)\) \{$');
+    final caseGotoRe = RegExp(r'^ +case (-?\d+): goto (label_\d+);$');
+    final defaultGotoRe = RegExp(r'^ +default: goto (label_\d+);$');
+    final anyLabelRe = RegExp(r'^ *(label_\d+):$');
+    final gotoLabelRe = RegExp(r'goto (label_\d+);');
+
+    bool changed;
+    do {
+      changed = false;
+
+      final labelMap = <String, int>{};
+      for (var i = 0; i < lines.length; i++) {
+        final m = anyLabelRe.firstMatch(lines[i]);
+        if (m != null) labelMap[m.group(1)!] = i;
+      }
+
+      for (var i = 0; i < lines.length; i++) {
+        final sm = switchOpenRe.firstMatch(lines[i]);
+        if (sm == null) continue;
+        final indent = sm.group(1)!;
+        final selector = sm.group(2)!;
+
+        // 跳过 pattern switch（由 _structurePatternSwitch 处理）
+        if (selector.startsWith('invokedynamic')) continue;
+
+        // 找到 switch 结束 `}`
+        late final int closeLine;
+        var depth = 1;
+        bool foundClose = false;
+        for (var k = i + 1; k < lines.length; k++) {
+          if (lines[k].contains('{')) depth++;
+          if (lines[k].contains('}')) {
+            depth--;
+            if (depth == 0) {
+              closeLine = k;
+              foundClose = true;
+              break;
+            }
+          }
+        }
+        if (!foundClose) continue;
+
+        // 解析 case -> label 与 default -> label 映射
+        final cases = <(int, String)>[];
+        String? defaultLabel;
+        for (var k = i + 1; k < closeLine; k++) {
+          final cm = caseGotoRe.firstMatch(lines[k]);
+          if (cm != null) {
+            cases.add((int.parse(cm.group(1)!), cm.group(2)!));
+            continue;
+          }
+          final dm = defaultGotoRe.firstMatch(lines[k]);
+          if (dm != null) {
+            defaultLabel = dm.group(1);
+          }
+        }
+        if (cases.isEmpty || defaultLabel == null) continue;
+
+        final allLabels = <String>[...cases.map((c) => c.$2), defaultLabel];
+
+        // 检查所有 label 都存在且在 switch 之后
+        bool valid = allLabels.every((l) {
+          final pos = labelMap[l];
+          return pos != null && pos > closeLine;
+        });
+        if (!valid) continue;
+
+        // switch 后到第一个 case label 之间不能有未标记代码
+        final sortedByPos = allLabels.toList()
+          ..sort((a, b) => labelMap[a]!.compareTo(labelMap[b]!));
+        final firstCasePos = labelMap[sortedByPos.first]!;
+        for (var k = closeLine + 1; k < firstCasePos; k++) {
+          if (lines[k].trim().isNotEmpty) {
+            valid = false;
+            break;
+          }
+        }
+        if (!valid) continue;
+
+        // 收集 switch 之后所有 label（按位置排序），用于确定 body 边界
+        final switchAfterLabels = <(String, int)>[];
+        for (var k = closeLine + 1; k < lines.length; k++) {
+          final m = anyLabelRe.firstMatch(lines[k]);
+          if (m != null) {
+            switchAfterLabels.add((m.group(1)!, k));
+          }
+        }
+        switchAfterLabels.sort((a, b) => a.$2.compareTo(b.$2));
+
+        // 确定整个 switch 区域的结束：最后一个 case body 后的第一个非 case label
+        final lastCasePos = labelMap[sortedByPos.last]!;
+        int regionEnd = lines.length;
+        for (final (label, pos) in switchAfterLabels) {
+          if (pos > lastCasePos && !allLabels.contains(label)) {
+            regionEnd = pos;
+            break;
+          }
+        }
+
+        // 提取指定 label 对应的 body（从 label 下一行到下一个 label）
+        List<String> extractBody(String label) {
+          final pos = labelMap[label]!;
+          int bodyEnd = regionEnd;
+          for (final entry in switchAfterLabels) {
+            if (entry.$2 > pos) {
+              bodyEnd = entry.$2;
+              break;
+            }
+          }
+          return lines
+              .sublist(pos + 1, bodyEnd)
+              .where((l) => l.trim().isNotEmpty)
+              .toList();
+        }
+
+        // 检查所有 case body 都以 return/throw 结束（无 fallthrough）
+        bool allBodiesTerminate = true;
+        for (final label in allLabels) {
+          final body = extractBody(label);
+          if (body.isEmpty) {
+            allBodiesTerminate = false;
+            break;
+          }
+          final lastLine = body.last.trim();
+          if (!lastLine.startsWith('return') && !lastLine.startsWith('throw')) {
+            allBodiesTerminate = false;
+            break;
+          }
+        }
+        if (!allBodiesTerminate) continue;
+
+        // 构建 case body（重新缩进到 switch 内部）
+        final caseIndent = '$indent    ';
+        final bodyIndent = '$caseIndent    ';
+        String reindent(String line) {
+          final trimmed = line.trimLeft();
+          return '$bodyIndent$trimmed';
+        }
+
+        final newLines = <String>['${indent}switch ($selector) {'];
+        for (final (caseValue, caseLabel) in cases) {
+          final body = extractBody(caseLabel);
+          newLines.add('${caseIndent}case $caseValue:');
+          newLines.addAll(body.map(reindent));
+        }
+        final defaultBody = extractBody(defaultLabel);
+        newLines.add('${caseIndent}default:');
+        newLines.addAll(defaultBody.map(reindent));
+        newLines.add('$indent}');
+
+        // 若 regionEnd 处的 label 是未被引用的孤立尾部 label，一并移除
+        int replaceEnd = regionEnd;
+        if (regionEnd < lines.length) {
+          final lm = anyLabelRe.firstMatch(lines[regionEnd]);
+          if (lm != null) {
+            final tailLabel = lm.group(1)!;
+            bool referenced = false;
+            for (var k = 0; k < lines.length; k++) {
+              if (k == regionEnd) continue;
+              if (gotoLabelRe.hasMatch(lines[k]) &&
+                  lines[k].contains('goto $tailLabel;')) {
+                referenced = true;
+                break;
+              }
+            }
+            if (!referenced) {
+              replaceEnd = regionEnd + 1;
+            }
+          }
+        }
+
+        lines.replaceRange(i, replaceEnd, newLines);
+        changed = true;
+        break;
+      }
+    } while (changed);
+
+    return lines.join('\n');
   }
 
   String? _patternCaseFromBlock(
@@ -2553,6 +3428,40 @@ class CodePrinter {
         c == '0==1' ||
         c == '1!=0' ||
         c == '0!=1';
+  }
+
+  /// 判断两个类型是否兼容（可相互反向传播）。
+  /// boolean 与 int 不兼容，避免把数组长度误判为 boolean。
+  bool _typesCompatible(String a, String b) {
+    if (a == b) return true;
+    final numTypes = {'int', 'long', 'short', 'byte', 'char'};
+    if (numTypes.contains(a) && numTypes.contains(b)) return true;
+    return false;
+  }
+
+  /// 重新缩进代码块，保留相对缩进。
+  /// [targetIndent] 是第一行（最外层）应该使用的缩进。
+  /// 其他行根据与第一行的相对缩进差进行调整。
+  List<String> _reindentBlock(List<String> lines, String targetIndent) {
+    if (lines.isEmpty) return lines;
+    // 找到第一个非空行的原始缩进作为基准
+    var baseIndentLen = -1;
+    for (final l in lines) {
+      if (l.trim().isEmpty) continue;
+      baseIndentLen = l.length - l.trimLeft().length;
+      break;
+    }
+    if (baseIndentLen < 0) return lines;
+
+    final targetLen = targetIndent.length;
+    return lines.map((l) {
+      if (l.trim().isEmpty) return '';
+      final currentIndent = l.length - l.trimLeft().length;
+      final diff = currentIndent - baseIndentLen;
+      final newLen = targetLen + diff < 0 ? 0 : targetLen + diff;
+      final newIndent = ' ' * newLen;
+      return '$newIndent${l.trimLeft()}';
+    }).toList();
   }
 
   String _simplifyDoubleNegation(String cond) {
