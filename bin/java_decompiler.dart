@@ -11,6 +11,8 @@ void main(List<String> args) {
     ..addFlag('help', abbr: 'h', negatable: false, help: '显示帮助')
     ..addFlag('source', abbr: 's', negatable: false, help: '反编译为 Java 源码（默认行为）')
     ..addFlag('disassemble', abbr: 'd', negatable: false, help: '仅反汇编字节码')
+    ..addFlag('methods', abbr: 'm', negatable: false, help: '输出所有方法签名')
+    ..addFlag('fields', abbr: 'f', negatable: false, help: '输出所有字段')
     ..addFlag('hide-empty-public-ctors',
         negatable: false, help: '省略空的 public 默认构造方法')
     ..addFlag('dump-pool', negatable: false, help: '打印常量池内容');
@@ -41,6 +43,10 @@ void main(List<String> args) {
 
   if (results['disassemble'] as bool) {
     _disassemble(classFile);
+  } else if (results['methods'] as bool) {
+    print(Decompiler(classFile).methodSignatures());
+  } else if (results['fields'] as bool) {
+    print(Decompiler(classFile).fieldList());
   } else {
     print(Decompiler(
       classFile,

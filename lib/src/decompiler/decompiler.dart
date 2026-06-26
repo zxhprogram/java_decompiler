@@ -62,6 +62,91 @@ class Decompiler {
     return _addImports(raw, className, package);
   }
 
+  /// 输出所有方法签名，每行一个。
+  String methodSignatures() {
+    final className = _pool.getClassName(_cf.thisClass);
+    final simple = _simpleName(className);
+    final sb = StringBuffer();
+    for (final method in _cf.methods) {
+      final rawName = _pool.getString(method.nameIndex);
+      if (rawName == '<clinit>') continue;
+      final desc = _pool.getString(method.descriptorIndex);
+      final sigAttr = method.attribute<SignatureAttribute>();
+      var (paramTypes, returnType) =
+          DescriptorParser.parseMethodDescriptor(desc);
+      String? typeParams;
+      if (sigAttr != null) {
+        try {
+          final sig = _pool.getString(sigAttr.signatureIndex);
+          (paramTypes, returnType) = SignatureParser.parseMethodSignature(sig);
+          typeParams = SignatureParser.parseTypeParameters(sig);
+        } catch (_) {}
+      }
+      final isStatic = (method.accessFlags & AccessFlags.ACC_STATIC) != 0;
+      final isVarargs = (method.accessFlags & AccessFlags.ACC_VARARGS) != 0;
+      final displayName = rawName == '<init>' ? simple : rawName;
+      final displayReturn = rawName == '<init>' ? '' : returnType;
+      final typeParamsPart =
+          (typeParams != null && typeParams.isNotEmpty) ? '$typeParams ' : '';
+      final mods = AccessFlagFormatter.methodFlags(method.accessFlags);
+      final params = _parameterNames(method, paramTypes.length, isStatic);
+      sb.write('  ${mods.join(' ')}${mods.isEmpty ? '' : ' '}'
+          '${displayReturn.isEmpty ? '' : '$displayReturn '}$typeParamsPart$displayName(');
+      for (var i = 0; i < paramTypes.length; i++) {
+        if (i > 0) sb.write(', ');
+        var type = paramTypes[i];
+        if (isVarargs && i == paramTypes.length - 1 && type.endsWith('[]')) {
+          type = '${type.substring(0, type.length - 2)}...';
+        }
+        sb.write('$type ${params[i]}');
+      }
+      sb.write(')');
+      final exceptions = method.attribute<ExceptionsAttribute>();
+      if (exceptions != null && exceptions.exceptionIndexTable.isNotEmpty) {
+        final names = exceptions.exceptionIndexTable
+            .map((idx) =>
+                DescriptorParser.internalToSourceName(_pool.getClassName(idx)))
+            .join(', ');
+        sb.write(' throws $names');
+      }
+      sb.writeln(';');
+    }
+    return _withImports(sb.toString());
+  }
+
+  /// 输出所有字段，每行一个。
+  String fieldList() {
+    final sb = StringBuffer();
+    for (final field in _cf.fields) {
+      final name = _pool.getString(field.nameIndex);
+      final desc = _pool.getString(field.descriptorIndex);
+      final type = DescriptorParser.parseFieldDescriptor(desc);
+      final mods = AccessFlagFormatter.fieldFlags(field.accessFlags);
+      sb.write('  ${mods.join(' ')}${mods.isEmpty ? '' : ' '}$type $name');
+      final cv = field.attribute<ConstantValueAttribute>();
+      if (cv != null && (field.accessFlags & AccessFlags.ACC_STATIC) != 0) {
+        sb.write(' = ${_pool.getLiteral(cv.constantValueIndex)}');
+      }
+      sb.writeln(';');
+    }
+    return _withImports(sb.toString());
+  }
+
+  /// 把签名/字段列表文本套上类外壳走一遍 _addImports，再抽出主体，
+  /// 使输出与反编译结果一致地使用简单名 + import。
+  String _withImports(String body) {
+    final className = _pool.getClassName(_cf.thisClass);
+    final package = _packageOf(className);
+    final simple = _simpleName(className);
+    final wrapped =
+        '${package.isEmpty ? '' : 'package $package;\n\n'}class $simple {\n$body}\n';
+    final withImports = _addImports(wrapped, className, package);
+    final start = withImports.indexOf('{') + 1;
+    final end = withImports.lastIndexOf('}');
+    if (start <= 0 || end < start) return body;
+    return withImports.substring(start, end).trim();
+  }
+
   String _packageOf(String className) {
     final dot = className.lastIndexOf('/');
     if (dot == -1) return '';
