@@ -75,7 +75,8 @@ class CodePrinter {
     if (simple != null) return simple;
 
     final (raw, offsetToLine) = _printStackBased(instructions);
-    var text = _structureTryCatch(raw, offsetToLine);
+    var text = _preprocessPatternMatching(raw);
+    text = _structureTryCatch(text, offsetToLine);
     text = _structureIfs(text);
     text = _structurePatternSwitch(text);
     text = _structureSimpleSwitch(text);
@@ -89,9 +90,368 @@ class CodePrinter {
     text = _removeUnusedLabels(text);
     text = _simplifyEmptyIfElse(text);
     text = _cleanupTryCatchResidue(text);
+    text = _cleanupPatternMatchingResidue(text);
+    text = _simplifyInstanceofRecordPattern(text);
     text = _removeStackUnderflow(text);
     text = _restoreVariableNames(text);
     return text;
+  }
+
+  /// 预处理模式匹配相关的编译器生成代码：
+  /// 1. `if (1 == 0) goto label_X;` - 始终为假的条件跳转，直接移除
+  /// 2. `Throwable pN = /*exception*/; throw new MatchException(...)` - 编译器为
+  ///    pattern switch 生成的 MatchException 包装，移除后 _structureTryCatch
+  ///    不会再把整个方法体包进 try-catch
+  /// 3. `Objects.requireNonNull(var);` - 编译器生成的 null 检查
+  String _preprocessPatternMatching(String source) {
+    var lines = source.split('\n');
+
+    // 1. 移除 `if (1 == 0) goto label_X;`（永假条件，直接删除即可）
+    final alwaysFalseRe = RegExp(r'^ +if \(1 == 0\) goto (label_\d+);$');
+    for (var i = 0; i < lines.length; i++) {
+      if (alwaysFalseRe.hasMatch(lines[i])) {
+        lines[i] = '';
+      }
+    }
+
+    // 2. 移除编译器生成的 MatchException catch
+    //    模式：`Throwable pN = /*exception*/;` 后跟 `throw new MatchException(pN.toString(), pN);`
+    final throwableExRe =
+        RegExp(r'^ +(?:java\.lang\.)?Throwable (\w+) = /\*exception\*/;$');
+    for (var i = 0; i < lines.length; i++) {
+      final m = throwableExRe.firstMatch(lines[i]);
+      if (m == null) continue;
+      final varName = m.group(1)!;
+      // 查找后续非空行，检查是否是 `throw new MatchException(varName.toString(), varName);`
+      for (var k = i + 1; k < lines.length; k++) {
+        final trimmed = lines[k].trim();
+        if (trimmed.isEmpty) continue;
+        final matchExRe = RegExp(
+            r'^throw new (?:java\.lang\.)?MatchException\(' +
+                RegExp.escape(varName) +
+                r'\.toString\(\), ' +
+                RegExp.escape(varName) +
+                r'\);$');
+        if (matchExRe.hasMatch(trimmed)) {
+          lines[i] = '';
+          lines[k] = '';
+        }
+        break;
+      }
+    }
+
+    // 3. 移除独立的 `Objects.requireNonNull(var);`
+    final requireRe =
+        RegExp(r'^ +(?:java\.util\.)?Objects\.requireNonNull\([\w.]+\);$');
+    for (var i = 0; i < lines.length; i++) {
+      if (requireRe.hasMatch(lines[i])) {
+        lines[i] = '';
+      }
+    }
+
+    // 清理空行
+    final result = <String>[];
+    var prevEmpty = false;
+    for (final line in lines) {
+      final isEmpty = line.trim().isEmpty;
+      if (isEmpty && prevEmpty) continue;
+      result.add(line);
+      prevEmpty = isEmpty;
+    }
+    return result.join('\n');
+  }
+
+  /// 简化 instanceof record pattern 反编译结果。
+  ///
+  /// 输入示例：
+  /// ```
+  /// if ((p0 instanceof Point)) {
+  ///     Point p1 = ((Point) p0);
+  ///     int p3 = p1.x();
+  ///     int p5 = p3;
+  ///
+  ///     int p2 = p3;
+  ///     p3 = p1.y();
+  ///     System.out.println("x=" + p2);
+  /// }
+  /// ```
+  /// 输出示例：
+  /// ```
+  /// if (p0 instanceof Point(int x, _)) {
+  ///     System.out.println("x=" + x);
+  /// }
+  /// ```
+  String _simplifyInstanceofRecordPattern(String source) {
+    var lines = source.split('\n');
+    // 模式：`if ((VAR instanceof TYPE)) {`，TYPE 可能是全限定类名
+    final ifRe = RegExp(r'^(\s*)if \(\((\w+) instanceof ([\w.]+)\)\) \{$');
+    for (var i = 0; i < lines.length; i++) {
+      final m = ifRe.firstMatch(lines[i]);
+      if (m == null) continue;
+      final indent = m.group(1)!;
+      final objVar = m.group(2)!;
+      final fullTypeName = m.group(3)!;
+      // 简化类型名（去掉包前缀）
+      final typeName = fullTypeName.contains('.')
+          ? fullTypeName.substring(fullTypeName.lastIndexOf('.') + 1)
+          : fullTypeName;
+
+      // 找到对应的右花括号
+      int depth = 1;
+      int? closeLine;
+      for (var j = i + 1; j < lines.length; j++) {
+        final t = lines[j].trim();
+        if (t.endsWith('{')) depth++;
+        if (t == '}') {
+          depth--;
+          if (depth == 0) {
+            closeLine = j;
+            break;
+          }
+        }
+      }
+      if (closeLine == null) continue;
+
+      final body = lines.sublist(i + 1, closeLine);
+      // 第一行应是 `TYPE pN = ((TYPE) VAR);`，TYPE 可能是全限定类名
+      final castRe = RegExp(
+          r'^\s*([\w.]+) (\w+) = \(\(\1\) ' + RegExp.escape(objVar) + r'\);$');
+      final castM = castRe.firstMatch(body.isNotEmpty ? body.first : '');
+      if (castM == null) continue;
+      final patternVar = castM.group(2)!;
+
+      // 按行顺序扫描，跟踪每个变量的当前"含义"：
+      // - 'accessor:NAME' 表示该变量当前持有 patternVar.NAME() 的值
+      // - 'alias:VAR' 表示该变量是另一个变量的别名
+      // 变量可能被复用（先存 x，再存 y），所以必须按行顺序处理。
+      final varMeaning = <String, String>{};
+      // 每个 accessor 是否被使用（在非声明行中被引用）
+      final usedAccessors = <String>{};
+      // 要跳过的行（组件提取 / 别名声明）
+      final skipLines = <int>{};
+      // accessor 第一次出现时的变量名（用于构造 pattern）
+      final accessorFirstVar = <String, String>{};
+
+      final compRe = RegExp(r'^\s*(?:[\w.]+ )?(\w+) = ' +
+          RegExp.escape(patternVar) +
+          r'\.(\w+)\(\);$');
+      final aliasRe = RegExp(r'^\s*(?:[\w.]+ )?(\w+) = (\w+);$');
+
+      for (var k = 1; k < body.length; k++) {
+        final line = body[k];
+        // 检查是否是组件提取
+        final cm = compRe.firstMatch(line);
+        if (cm != null) {
+          final v = cm.group(1)!;
+          final acc = cm.group(2)!;
+          varMeaning[v] = 'accessor:$acc';
+          accessorFirstVar.putIfAbsent(acc, () => v);
+          skipLines.add(k);
+          continue;
+        }
+        // 检查是否是别名声明
+        final am = aliasRe.firstMatch(line);
+        if (am != null) {
+          final v = am.group(1)!;
+          final src = am.group(2)!;
+          if (varMeaning.containsKey(src)) {
+            varMeaning[v] = varMeaning[src]!;
+            skipLines.add(k);
+            continue;
+          }
+        }
+        // 其他行：检查引用了哪些变量，标记对应的 accessor 为已使用
+        for (final entry in varMeaning.entries) {
+          if (RegExp(r'\b' + RegExp.escape(entry.key) + r'\b').hasMatch(line)) {
+            if (entry.value.startsWith('accessor:')) {
+              usedAccessors.add(entry.value.substring('accessor:'.length));
+            }
+          }
+        }
+      }
+
+      // 如果没有提取任何组件，不是 record pattern，跳过
+      if (accessorFirstVar.isEmpty) continue;
+
+      // 构造 pattern：按 accessor 字母序排列（适用于 x/y）
+      final accessors = accessorFirstVar.keys.toList()..sort();
+      final patternParts = <String>[];
+      for (final acc in accessors) {
+        if (usedAccessors.contains(acc)) {
+          patternParts.add(acc);
+        } else {
+          patternParts.add('_');
+        }
+      }
+      final pattern = '$typeName(${patternParts.join(', ')})';
+
+      // 构造新的 body：跳过声明行，替换变量引用为 accessor 名
+      // 但变量可能被复用，所以需要按行重新计算含义
+      final newBody = <String>[];
+      final currentMeaning = <String, String>{};
+      for (var k = 1; k < body.length; k++) {
+        final line = body[k];
+        if (skipLines.contains(k)) {
+          // 更新当前含义
+          final cm = compRe.firstMatch(line);
+          if (cm != null) {
+            final v = cm.group(1)!;
+            final acc = cm.group(2)!;
+            currentMeaning[v] = 'accessor:$acc';
+            continue;
+          }
+          final am = aliasRe.firstMatch(line);
+          if (am != null) {
+            final v = am.group(1)!;
+            final src = am.group(2)!;
+            if (currentMeaning.containsKey(src)) {
+              currentMeaning[v] = currentMeaning[src]!;
+            }
+            continue;
+          }
+        }
+        if (line.trim().isEmpty) continue;
+        // 替换变量引用
+        var newLine = line;
+        for (final entry in currentMeaning.entries) {
+          if (entry.value.startsWith('accessor:')) {
+            final acc = entry.value.substring('accessor:'.length);
+            // 只有当 accessor 被使用时才替换
+            if (usedAccessors.contains(acc)) {
+              newLine = newLine.replaceAll(
+                RegExp(r'\b' + RegExp.escape(entry.key) + r'\b'),
+                acc,
+              );
+            }
+          }
+        }
+        newBody.add(newLine);
+      }
+
+      // 去掉 newBody 末尾空行
+      while (newBody.isNotEmpty && newBody.last.trim().isEmpty) {
+        newBody.removeLast();
+      }
+
+      // 组装新的 if 块
+      final newLines = <String>[];
+      newLines.add('$indent if ($objVar instanceof $pattern) {');
+      for (final l in newBody) {
+        newLines.add(l);
+      }
+      newLines.add('$indent}');
+      lines.replaceRange(i, closeLine + 1, newLines);
+      i += newLines.length - 1;
+    }
+    return lines.join('\n');
+  }
+
+  /// 清理模式匹配反编译后的残留：
+  /// 1. `if (1) { body } else { ... }` - 始终为真的 if，展开 body 并丢弃 else 分支
+  /// 2. `if (1) { body }` - 始终为真的 if，展开为 body
+  /// 3. `Objects.requireNonNull(var);` - 编译器生成的 null 检查
+  String _cleanupPatternMatchingResidue(String source) {
+    var lines = source.split('\n');
+
+    // 1. 清理 `if (1) { body } else { elseBody }` 和 `if (1) { body }`
+    final ifOneRe = RegExp(r'^(\s*)if \(1\) \{$');
+    bool changed;
+    do {
+      changed = false;
+      for (var i = 0; i < lines.length; i++) {
+        final m = ifOneRe.firstMatch(lines[i]);
+        if (m == null) continue;
+
+        // 找到 if 块的闭合 `}`（可能是 `}` 或 `} else {`）
+        int? ifCloseLine;
+        var depth = 1;
+        for (var k = i + 1; k < lines.length; k++) {
+          final line = lines[k];
+          for (var ci = 0; ci < line.length; ci++) {
+            final c = line[ci];
+            if (c == '{')
+              depth++;
+            else if (c == '}') depth--;
+            if (depth == 0) {
+              ifCloseLine = k;
+              break;
+            }
+          }
+          if (ifCloseLine != null) break;
+        }
+        if (ifCloseLine == null) continue;
+
+        // 提取 if body（去掉一层缩进）
+        final ifBody = <String>[];
+        for (var k = i + 1; k < ifCloseLine; k++) {
+          final line = lines[k];
+          if (line.trim().isEmpty) {
+            ifBody.add(line);
+          } else if (line.startsWith('    ')) {
+            ifBody.add(line.substring(4));
+          } else {
+            ifBody.add(line);
+          }
+        }
+
+        // 检查闭合行是否同时开启 else 分支（`} else {` 在同一行）
+        final closeLineContent = lines[ifCloseLine].trim();
+        if (closeLineContent == '} else {') {
+          // else 块的 `{` 未被 depth 计数（在 depth==0 时就 break 了）
+          // 从 ifCloseLine+1 开始搜索，depth 起始为 1
+          int? elseCloseLine;
+          depth = 1;
+          for (var k = ifCloseLine + 1; k < lines.length; k++) {
+            final line = lines[k];
+            for (var ci = 0; ci < line.length; ci++) {
+              final c = line[ci];
+              if (c == '{')
+                depth++;
+              else if (c == '}') depth--;
+              if (depth == 0) {
+                elseCloseLine = k;
+                break;
+              }
+            }
+            if (elseCloseLine != null) break;
+          }
+          if (elseCloseLine != null) {
+            // 替换整个 if-else 为 if body
+            lines.replaceRange(i, elseCloseLine + 1, ifBody);
+            changed = true;
+            break;
+          }
+        } else if (closeLineContent.startsWith('} else')) {
+          // `} else if (...) {` 或其他形式 - 不处理
+          continue;
+        } else {
+          // 无 else 分支，直接替换
+          lines.replaceRange(i, ifCloseLine + 1, ifBody);
+          changed = true;
+          break;
+        }
+      }
+    } while (changed);
+
+    // 2. 清理独立的 `Objects.requireNonNull(var);` 行
+    final requireRe =
+        RegExp(r'^\s+(?:java\.util\.)?Objects\.requireNonNull\([\w.]+\);$');
+    for (var i = 0; i < lines.length; i++) {
+      if (requireRe.hasMatch(lines[i])) {
+        lines[i] = '';
+      }
+    }
+
+    // 清理空行
+    final result = <String>[];
+    var prevEmpty = false;
+    for (final line in lines) {
+      final isEmpty = line.trim().isEmpty;
+      if (isEmpty && prevEmpty) continue;
+      result.add(line);
+      prevEmpty = isEmpty;
+    }
+    return result.join('\n');
   }
 
   /// 清理 try/catch/finally 反编译后的残留：
@@ -241,6 +601,9 @@ class CodePrinter {
       }
     } while (changed);
 
+    // 模式 1.5：处理残留的非 Throwable /*exception*/ 模式
+    // 这些是 _structureTryCatch 未能处理的嵌套 catch 块
+    lines = _cleanupRemainingExceptions(lines);
     // 模式 2：try-with-resources 清理
     lines = _cleanupTryWithResources(lines);
 
@@ -416,6 +779,112 @@ class CodePrinter {
     return lines;
   }
 
+  /// 处理残留的非 Throwable /*exception*/ 模式
+  /// 这些是 _structureTryCatch 未能处理的嵌套 catch 块
+  /// 模式：
+  ///   <try body>
+  ///   goto label_X;                       <- 跳过 catch 块
+  ///   ExceptionType pN = /*exception*/;   <- catch 块开始
+  ///   <exception body>
+  ///   } catch (Throwable e) {             <- 外层 Throwable catch
+  ///
+  /// 转换为：
+  ///   <try body>
+  ///   } catch (ExceptionType _) {
+  ///   <exception body>
+  ///   } catch (Throwable e) {
+  List<String> _cleanupRemainingExceptions(List<String> lines) {
+    final exceptionRe = RegExp(r'^(\s+)(\S+) (\w+) = /\*exception\*/;$');
+    final catchBlockRe = RegExp(r'^(\s+)\} catch \(Throwable e\) \{$');
+    final gotoRe = RegExp(r'^(\s+)goto (label_\d+);$');
+    final labelRe = RegExp(r'^(\s+)(label_\d+):$');
+
+    bool changed;
+    do {
+      changed = false;
+      for (var i = 0; i < lines.length; i++) {
+        final m = exceptionRe.firstMatch(lines[i]);
+        if (m == null) continue;
+        final typeName = m.group(2)!;
+        final varName = m.group(3)!;
+
+        // 查找后续的 catch (Throwable e) 块作为插入点
+        var catchBlockLine = -1;
+        String? catchIndent;
+        for (var k = i + 1; k < lines.length; k++) {
+          final cm = catchBlockRe.firstMatch(lines[k]);
+          if (cm != null) {
+            catchBlockLine = k;
+            catchIndent = cm.group(1)!;
+            break;
+          }
+        }
+        if (catchBlockLine < 0 || catchIndent == null) continue;
+
+        // 提取异常处理代码（i+1 到 catchBlockLine-1）
+        final exceptionBody = <String>[];
+        for (var k = i + 1; k < catchBlockLine; k++) {
+          final trimmed = lines[k].trim();
+          if (trimmed.isEmpty) continue;
+          // 跳过 catch 块末尾的 goto（跳转到合并点）
+          if (RegExp(r'^goto (label_\d+);$').hasMatch(trimmed)) continue;
+          // 将异常变量替换为 _（无名模式）
+          exceptionBody.add(
+            lines[k].replaceAllMapped(
+              RegExp(r'\b' + RegExp.escape(varName) + r'\b'),
+              (_) => '_',
+            ),
+          );
+        }
+
+        // 检查前一行是否是 goto label_X;（跳过 catch 块的跳转）
+        var gotoLine = -1;
+        if (i > 0) {
+          final gm = gotoRe.firstMatch(lines[i - 1]);
+          if (gm != null) {
+            gotoLine = i - 1;
+          }
+        }
+
+        // 构建新的 catch 块（使用外层 catch 的缩进）
+        // 注意：不添加闭合 `}`，因为后续的 `} catch (Throwable e) {`
+        // 中的 `}` 会闭合本 catch 块，形成多 catch 子句
+        final newCatchBlock = <String>[
+          '$catchIndent} catch ($typeName _) {',
+          ...exceptionBody,
+        ];
+
+        // 替换：从 gotoLine（如果有）或 i 开始，到 catchBlockLine 之前
+        final startLine = gotoLine >= 0 ? gotoLine : i;
+        lines.replaceRange(startLine, catchBlockLine, newCatchBlock);
+        changed = true;
+        break;
+      }
+    } while (changed);
+
+    // 清理 goto 目标 label 如果不再被引用
+    final gotoLabelRe = RegExp(r'goto (label_\d+);');
+    for (var i = 0; i < lines.length; i++) {
+      final m = labelRe.firstMatch(lines[i]);
+      if (m == null) continue;
+      final label = m.group(2)!;
+      var hasRef = false;
+      for (var k = 0; k < lines.length; k++) {
+        if (k == i) continue;
+        if (gotoLabelRe.hasMatch(lines[k]) &&
+            lines[k].contains('goto $label;')) {
+          hasRef = true;
+          break;
+        }
+      }
+      if (!hasRef) {
+        lines[i] = '';
+      }
+    }
+
+    return lines;
+  }
+
   /// 简化 `if (!cond) { } else { body }` 为 `if (cond) { body }`
   /// 以及 `if (cond) { } else { body }` 为 `if (!cond) { body }`
   String _simplifyEmptyIfElse(String source) {
@@ -581,7 +1050,26 @@ class CodePrinter {
     bool changed;
     do {
       changed = false;
-      // 收集所有被引用的 label
+
+      // 1. 先移除 "goto label_X;" 紧接着 "label_X:" 的模式
+      //    （goto 跳到下一行的 label，是冗余跳转）
+      for (var i = 0; i < lines.length - 1; i++) {
+        final gotoM = RegExp(r'^(\s*)goto (label_\d+);$').firstMatch(lines[i]);
+        if (gotoM == null) continue;
+        final label = gotoM.group(2)!;
+        // 查找紧接的 label 行（允许中间有空白行）
+        for (var j = i + 1; j < lines.length; j++) {
+          if (lines[j].trim().isEmpty) continue;
+          final labelM = labelRe.firstMatch(lines[j]);
+          if (labelM != null && labelM.group(2) == label) {
+            lines[i] = '';
+            changed = true;
+          }
+          break;
+        }
+      }
+
+      // 2. 收集所有被引用的 label
       final referenced = <String>{};
       for (final line in lines) {
         for (final m in gotoRe.allMatches(line)) {
@@ -2219,16 +2707,29 @@ class CodePrinter {
       final tryBody = lines.sublist(tryStart, tryBodyEnd).toList();
       var catchBody = lines.sublist(catchStart, catchEnd + 1).toList();
 
+      // 去掉 try body 末尾的空行
+      while (tryBody.isNotEmpty && tryBody.last.trim().isEmpty) {
+        tryBody.removeLast();
+      }
+
       // 处理异常变量：去掉 `Exception p1 = /*exception*/;` 这类行，
-      // 把后续对该变量的引用统一改为 `e`。
+      // 把后续对该变量的引用统一改为 `e`（若未被引用则用 `_` 表示 unnamed pattern）。
       String catchVar = 'e';
+      bool catchVarUsed = false;
       if (catchBody.isNotEmpty) {
         final m = exceptionRe.firstMatch(catchBody[0]);
         if (m != null) {
           catchVar = m.group(2)!;
           catchBody.removeAt(0);
-          if (catchVar != 'e') {
-            final wordRe = RegExp(r'\b' + RegExp.escape(catchVar) + r'\b');
+          // 检查 catchVar 是否在 catch body 中被引用
+          final wordRe = RegExp(r'\b' + RegExp.escape(catchVar) + r'\b');
+          for (var i = 0; i < catchBody.length; i++) {
+            if (wordRe.hasMatch(catchBody[i])) {
+              catchVarUsed = true;
+              break;
+            }
+          }
+          if (catchVarUsed && catchVar != 'e') {
             for (var i = 0; i < catchBody.length; i++) {
               catchBody[i] = catchBody[i].replaceAll(wordRe, 'e');
             }
@@ -2236,7 +2737,16 @@ class CodePrinter {
         }
       }
 
-      // 构建 catch 类型名
+      // 清理 catch body 中残留的 `goto label_X;`（通常是 try/catch 边界处的跳转）
+      final catchGotoRe = RegExp(r'^ *goto (label_\d+);$');
+      catchBody = catchBody.where((l) => !catchGotoRe.hasMatch(l)).toList();
+      // 去掉 catch body 末尾的空行
+      while (catchBody.isNotEmpty && catchBody.last.trim().isEmpty) {
+        catchBody.removeLast();
+      }
+
+      // 构建 catch 类型名（若 catch 变量未被引用，使用 `_` 表示 unnamed pattern）
+      final varName = catchVarUsed ? 'e' : '_';
       String catchTypeDecl;
       if (isFinally) {
         catchTypeDecl = ''; // finally 块无类型
@@ -2252,14 +2762,14 @@ class CodePrinter {
           }
           typeNames.add(tn);
         }
-        catchTypeDecl = '${typeNames.join(' | ')} e';
+        catchTypeDecl = '${typeNames.join(' | ')} $varName';
       } else {
         var typeName = DescriptorParser.internalToSourceName(
             _pool.getClassName(e.catchType));
         if (typeName.startsWith('java.lang.')) {
           typeName = typeName.substring('java.lang.'.length);
         }
-        catchTypeDecl = '$typeName e';
+        catchTypeDecl = '$typeName $varName';
       }
 
       // 如果是 finally 块，需要检查 catchBody 是否包含 athrow（重新抛出）
@@ -3302,7 +3812,8 @@ class CodePrinter {
     final switchRe = RegExp(
         r'^        switch \(invokedynamic typeSwitch\((\w+), (\w+)\)\) \{$');
     final labelRe = RegExp(r'^      (label_\d+):$');
-    final intInitRe = RegExp(r'^        int (\w+) = 0;$');
+    // 状态变量初始化：`int p2 = 0;` 或 `p2 = 0;`（当变量已声明时）
+    final intInitRe = RegExp(r'^        (?:int )?(\w+) = 0;$');
     final headerAssignRe =
         RegExp(r'^        (\S+(?:<[^>]+>)?) (\w+) = (\w+);$');
 
@@ -3490,7 +4001,7 @@ class CodePrinter {
     }
 
     // 5. 逐个处理块，生成 case 子句
-    final caseLines = <String>[];
+    final caseLines = <({bool isExpr, String body})>[];
     for (var ci = 0; ci < cases.length; ci++) {
       final start = blockStarts[ci];
       final end = (ci + 1 < blockStarts.length)
@@ -3518,16 +4029,34 @@ class CodePrinter {
 
     if (caseLines.isEmpty) return source;
 
-    // 6. 组装新的 switch 表达式
+    // 6. 组装新的 switch
+    // 若所有 case 都是表达式风格，生成 `return switch (...) { ... };`（表达式）
+    // 否则生成语句风格的 `switch (...) { ... }`
+    final allExpr = caseLines.every((c) => c.isExpr);
     final indent = '            ';
-    final newSwitch = <String>[
-      '        return switch ($originalSelector) {',
-      ...caseLines.map((l) => '$indent$l'),
-      '        };',
-    ];
+    final newSwitch = <String>[];
+    if (allExpr) {
+      newSwitch.add('        return switch ($originalSelector) {');
+      for (final c in caseLines) {
+        newSwitch.add('$indent${c.body}');
+      }
+      newSwitch.add('        };');
+    } else {
+      newSwitch.add('        switch ($originalSelector) {');
+      for (final c in caseLines) {
+        // 语句块可能跨多行，统一缩进
+        for (final l in c.body.split('\n')) {
+          newSwitch.add('$indent$l');
+        }
+      }
+      newSwitch.add('        }');
+    }
 
-    // 7. 替换区域：把整个 pattern switch 生成的状态机替换为新的 switch 表达式
-    lines.replaceRange(headerStart, lines.length, newSwitch);
+    // 7. 替换区域：把整个 pattern switch 生成的状态机替换为新的 switch
+    //    只替换到状态机结束（exceptionStartLine 或最后一个 case 块结束位置），
+    //    保留后续的 try-catch 等代码。
+    final replaceEnd = exceptionStartLine ?? lines.length;
+    lines.replaceRange(headerStart, replaceEnd, newSwitch);
     return '${lines.join('\n')}\n';
   }
 
@@ -3717,7 +4246,9 @@ class CodePrinter {
     return lines.join('\n');
   }
 
-  String? _patternCaseFromBlock(
+  /// 处理结果：可能是单表达式（`return/throw expr;`），也可能是语句块。
+  /// 当 [isExpr] 为 true 时 [body] 是单个表达式，否则是已经缩进好的语句行。
+  ({bool isExpr, String body})? _patternCaseFromBlock(
     int? caseValue,
     List<String> block,
     String selectorVar,
@@ -3736,7 +4267,18 @@ class CodePrinter {
         break;
       }
     }
-    if (resultExpr == null) return null;
+
+    // 没有返回/抛出表达式 -> 按语句块处理
+    if (resultExpr == null) {
+      return _patternCaseFromBlockStmt(
+        caseValue,
+        block,
+        selectorVar,
+        stateVar,
+        switchLabel,
+        isDefault: isDefault,
+      );
+    }
 
     resultExpr = resultExpr.replaceAllMapped(
         RegExp(r'(?:java\.lang\.)?String\.valueOf\(([^)]+)\)'),
@@ -3744,10 +4286,10 @@ class CodePrinter {
 
     // 默认块 / null 块
     if (isDefault) {
-      return 'default -> $resultExpr;';
+      return (isExpr: true, body: 'default -> $resultExpr;');
     }
     if (caseValue == -1) {
-      return 'case null -> $resultExpr;';
+      return (isExpr: true, body: 'case null -> $resultExpr;');
     }
 
     // 找到模式变量声明：Type v = ((Type) selector);
@@ -3843,7 +4385,227 @@ class CodePrinter {
 
     final guardPart = guard != null ? ' when $guard' : '';
     final simpleType = _simplifyTypeName(patternType);
-    return 'case $simpleType $patternVar$guardPart -> $resultExpr;';
+    return (
+      isExpr: true,
+      body: 'case $simpleType $patternVar$guardPart -> $resultExpr;',
+    );
+  }
+
+  /// 处理不含 `return/throw` 的 case 块（语句风格），收集有效语句生成 case 体。
+  ({bool isExpr, String body})? _patternCaseFromBlockStmt(
+    int? caseValue,
+    List<String> block,
+    String selectorVar,
+    String stateVar,
+    String? switchLabel, {
+    bool isDefault = false,
+  }) {
+    final gotoRe = RegExp(r'^ *goto (label_\d+);$');
+    final labelRe = RegExp(r'^ *(label_\d+):$');
+
+    // 1. 提取模式变量（cast 行）
+    final castRe = RegExp(r'^        (\S+(?:<[^>]+>)?) (\w+) = \(\(\1\) ' +
+        RegExp.escape(selectorVar) +
+        r'\);$');
+    String? patternType;
+    String? patternVar;
+    int? castLineIdx;
+    if (!isDefault && caseValue != -1) {
+      for (var i = 0; i < block.length; i++) {
+        final m = castRe.firstMatch(block[i]);
+        if (m != null) {
+          patternType = _simplifyTypeName(m.group(1)!);
+          patternVar = m.group(2);
+          castLineIdx = i;
+          break;
+        }
+      }
+    }
+
+    // 2. 按行顺序跟踪变量含义，处理变量复用
+    // varMeaning: variable -> 'accessor:NAME' 或 'alias:VAR'
+    final varMeaning = <String, String>{};
+    final usedAccessors = <String>{};
+    final skipLines = <int>{};
+    final accessorFirstVar = <String, String>{};
+
+    if (patternVar != null) {
+      final compRe = RegExp(r'^ *(?:\S+(?:<[^>]+>)? )?(\w+) = ' +
+          RegExp.escape(patternVar) +
+          r'\.(\w+)\(\);$');
+      final aliasRe = RegExp(r'^ *(?:\S+(?:<[^>]+>)? )?(\w+) = (\w+);$');
+
+      for (var k = (castLineIdx ?? -1) + 1; k < block.length; k++) {
+        final line = block[k];
+        final cm = compRe.firstMatch(line);
+        if (cm != null) {
+          final v = cm.group(1)!;
+          final acc = cm.group(2)!;
+          varMeaning[v] = 'accessor:$acc';
+          accessorFirstVar.putIfAbsent(acc, () => v);
+          skipLines.add(k);
+          continue;
+        }
+        final am = aliasRe.firstMatch(line);
+        if (am != null) {
+          final v = am.group(1)!;
+          final src = am.group(2)!;
+          if (varMeaning.containsKey(src)) {
+            varMeaning[v] = varMeaning[src]!;
+            skipLines.add(k);
+            continue;
+          }
+        }
+        // 其他行：检查引用了哪些变量，标记 accessor 为已使用
+        for (final entry in varMeaning.entries) {
+          if (RegExp(r'\b' + RegExp.escape(entry.key) + r'\b').hasMatch(line)) {
+            if (entry.value.startsWith('accessor:')) {
+              usedAccessors.add(entry.value.substring('accessor:'.length));
+            }
+          }
+        }
+      }
+    }
+
+    // 3. 收集有效语句
+    final stmts = <String>[];
+    final stateAssignRe =
+        RegExp(r'^ *' + RegExp.escape(stateVar) + r' = \d+;$');
+    final stateResetRe = RegExp(r'^ *' + RegExp.escape(stateVar) + r' = -1;$');
+
+    // 重新按行计算含义（因为变量可能被复用）
+    final currentMeaning = <String, String>{};
+    if (castLineIdx != null) {
+      // 从 cast 行之后开始
+    }
+
+    for (var i = 0; i < block.length; i++) {
+      final line = block[i];
+      final trimmed = line.trim();
+
+      if (trimmed.isEmpty) continue;
+      // 跳过 cast 行
+      if (i == castLineIdx) continue;
+      // 跳过 goto
+      if (gotoRe.hasMatch(line)) continue;
+      // 跳过 label
+      if (labelRe.hasMatch(line)) continue;
+      // 跳过状态变量赋值
+      if (stateAssignRe.hasMatch(line) || stateResetRe.hasMatch(line)) continue;
+      // 跳过编译器生成的 null 检查
+      if (line.contains('Objects.requireNonNull')) continue;
+      // 跳过 instanceof 检查残留
+      if (RegExp(r'^ *if \(\((\w+) instanceof').hasMatch(line)) continue;
+
+      // 跳过 if (cond) { state = N; goto switch; } 形式的重试代码
+      final retryIfRe = RegExp(r'^ *if \((.+)\) \{$');
+      final m = retryIfRe.firstMatch(line);
+      if (m != null) {
+        var isRetry = false;
+        for (var k = i + 1; k < block.length; k++) {
+          if (block[k].trim() == '}') break;
+          if (gotoRe.hasMatch(block[k])) {
+            final gm = gotoRe.firstMatch(block[k]);
+            if (gm != null && gm.group(1) == switchLabel) {
+              isRetry = true;
+              break;
+            }
+          }
+        }
+        if (isRetry) {
+          i++;
+          while (i < block.length && block[i].trim() != '}') {
+            i++;
+          }
+          continue;
+        }
+      }
+
+      // 如果是组件提取或别名声明行，更新 currentMeaning 并跳过
+      if (patternVar != null && skipLines.contains(i)) {
+        final compRe = RegExp(r'^ *(?:\S+(?:<[^>]+>)? )?(\w+) = ' +
+            RegExp.escape(patternVar) +
+            r'\.(\w+)\(\);$');
+        final aliasRe = RegExp(r'^ *(?:\S+(?:<[^>]+>)? )?(\w+) = (\w+);$');
+        final cm = compRe.firstMatch(line);
+        if (cm != null) {
+          currentMeaning[cm.group(1)!] = 'accessor:${cm.group(2)!}';
+          continue;
+        }
+        final am = aliasRe.firstMatch(line);
+        if (am != null) {
+          final v = am.group(1)!;
+          final src = am.group(2)!;
+          if (currentMeaning.containsKey(src)) {
+            currentMeaning[v] = currentMeaning[src]!;
+          }
+          continue;
+        }
+      }
+
+      // 替换变量引用为 accessor 名
+      var processed = line;
+      if (patternVar != null) {
+        for (final entry in currentMeaning.entries) {
+          if (entry.value.startsWith('accessor:')) {
+            final acc = entry.value.substring('accessor:'.length);
+            if (usedAccessors.contains(acc)) {
+              processed = processed.replaceAll(
+                RegExp(r'\b' + RegExp.escape(entry.key) + r'\b'),
+                acc,
+              );
+            }
+          }
+        }
+      }
+      processed = _simplifyTypeNamesInLine(processed);
+      stmts.add(processed);
+    }
+
+    if (stmts.isEmpty) {
+      if (isDefault) {
+        return (isExpr: false, body: 'default -> {}');
+      }
+      return null;
+    }
+
+    // 4. 构造 case 头部
+    String caseHead;
+    if (isDefault) {
+      caseHead = 'default -> {';
+    } else if (caseValue == -1) {
+      caseHead = 'case null -> {';
+    } else if (patternType != null && patternVar != null) {
+      // 如果有组件提取，构造 record pattern
+      if (accessorFirstVar.isNotEmpty) {
+        final accessors = accessorFirstVar.keys.toList()..sort();
+        final parts = accessors.map((acc) {
+          return usedAccessors.contains(acc) ? acc : '_';
+        }).join(', ');
+        caseHead = 'case $patternType($parts) -> {';
+      } else {
+        caseHead = 'case $patternType $patternVar -> {';
+      }
+    } else {
+      caseHead = 'case $caseValue -> {';
+    }
+
+    // 5. 缩进语句
+    final indentedStmts = stmts.map((s) {
+      var stripped = s.replaceFirst(RegExp(r'^ +'), '');
+      return '    $stripped';
+    }).toList();
+
+    final body = '$caseHead\n${indentedStmts.join('\n')}\n}';
+    return (isExpr: false, body: body);
+  }
+
+  /// 在一行中简化 java.lang. 类型前缀
+  String _simplifyTypeNamesInLine(String line) {
+    return line.replaceAllMapped(
+      RegExp(r'java\.lang\.(\w+)'),
+      (m) => m.group(1)!,
+    );
   }
 
   String _simplifyTypeName(String type) {
