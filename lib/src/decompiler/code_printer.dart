@@ -88,9 +88,332 @@ class CodePrinter {
     text = _cleanupBreakContinue(text);
     text = _removeUnusedLabels(text);
     text = _simplifyEmptyIfElse(text);
+    text = _cleanupTryCatchResidue(text);
     text = _removeStackUnderflow(text);
     text = _restoreVariableNames(text);
     return text;
+  }
+
+  /// 清理 try/catch/finally 反编译后的残留：
+  /// 1. catch 块末尾的 finally 内联副本（goto 前的 finally body）
+  /// 2. catch 块外的 finally handler 残留（`Throwable pN = /*exception*/; ... throw pN;`）
+  /// 3. try-with-resources 的 close 调用和 addSuppressed 模式
+  String _cleanupTryCatchResidue(String source) {
+    var lines = source.split('\n');
+
+    // 模式 1：识别 catch 块外的 finally handler 残留
+    // `Throwable pN = /*exception*/;` 或 `java.lang.Throwable pN = /*exception*/;`
+    final finallyHandlerRe = RegExp(
+        r'^        (?:java\.lang\.)?Throwable (\w+) = /\*exception\*/;$');
+    final throwVarRe = RegExp(r'^        throw (\w+);$');
+
+    bool changed;
+    do {
+      changed = false;
+      for (var i = 0; i < lines.length; i++) {
+        final m = finallyHandlerRe.firstMatch(lines[i]);
+        if (m == null) continue;
+        final varName = m.group(1)!;
+
+        // 找到对应的 throw varName; 结束
+        var throwLine = -1;
+        for (var k = i + 1; k < lines.length; k++) {
+          final tm = throwVarRe.firstMatch(lines[k]);
+          if (tm != null && tm.group(1) == varName) {
+            throwLine = k;
+            break;
+          }
+          // 遇到另一个 handler 或 try 开始则停止
+          if (finallyHandlerRe.hasMatch(lines[k]) ||
+              lines[k].trim() == 'try {' ||
+              lines[k].contains('} catch ') ||
+              lines[k].contains('} finally ')) {
+            break;
+          }
+        }
+        if (throwLine < 0) continue;
+
+        // 提取 finally body（i+1 到 throwLine，去掉异常变量赋值和 throw）
+        final finallyBody = lines
+            .sublist(i + 1, throwLine)
+            .where((l) => l.trim().isNotEmpty && !l.contains('/*exception*/'))
+            .toList();
+
+        // 检查前一个 catch 块是否以 `goto label_X;` 结尾（finally 内联副本）
+        // 向前查找时跳过已插入的 finally 块（`} finally { ... }`）
+        var catchEndLine = i - 1;
+        // 跳过空行
+        while (catchEndLine >= 0 && lines[catchEndLine].trim().isEmpty) {
+          catchEndLine--;
+        }
+        // 跳过已插入的 finally 块：`}` 前是 `} finally { ... }`
+        if (catchEndLine >= 0 && lines[catchEndLine].trim() == '}') {
+          // 向前查找，如果遇到 `} finally {`，跳过整个 finally 块
+          for (var k = catchEndLine; k >= 0; k--) {
+            if (lines[k].contains('} finally {')) {
+              catchEndLine = k - 1;
+              while (catchEndLine >= 0 && lines[catchEndLine].trim().isEmpty) {
+                catchEndLine--;
+              }
+              break;
+            }
+            if (lines[k].contains('} catch ') || lines[k].contains('} }')) {
+              break;
+            }
+          }
+        }
+        // 如果 catchEndLine 是 catch 块的 `}`，向前找 catch 块内最后一行（goto）
+        if (catchEndLine >= 0 && lines[catchEndLine].trim() == '}') {
+          var k = catchEndLine - 1;
+          while (k >= 0 && lines[k].trim().isEmpty) {
+            k--;
+          }
+          if (k >= 0) catchEndLine = k;
+        }
+
+        // 收集要删除的行索引
+        final toRemove = <int>{};
+
+        // 移除 finally handler 残留（i 到 throwLine）
+        for (var k = i; k <= throwLine; k++) {
+          toRemove.add(k);
+        }
+
+        // 如果 catch 块以 goto 结尾，移除 finally 副本和 goto
+        if (catchEndLine >= 0) {
+          final gotoRe = RegExp(r'^            goto (label_\d+);$');
+          if (gotoRe.hasMatch(lines[catchEndLine])) {
+            toRemove.add(catchEndLine); // goto
+            // 向上查找 finally 副本
+            for (var k = catchEndLine - 1; k >= 0; k--) {
+              final trimmed = lines[k].trim();
+              if (trimmed.isEmpty) continue;
+              final inFinallyBody =
+                  finallyBody.any((fb) => fb.trim() == trimmed);
+              if (inFinallyBody) {
+                toRemove.add(k);
+              } else {
+                break;
+              }
+            }
+          }
+        }
+
+        // 在前面找到 try/catch 块的 `}`，添加 finally
+        var insertLine = -1;
+        for (var k = i - 1; k >= 0; k--) {
+          if (toRemove.contains(k)) continue;
+          final t = lines[k].trim();
+          if (t == '}') {
+            insertLine = k;
+            break;
+          }
+          if (t.isEmpty) continue;
+        }
+
+        // 构建 finally 块（如果 finallyBody 非空）
+        List<String>? finallyBlock;
+        if (finallyBody.any((l) => l.trim().isNotEmpty)) {
+          finallyBlock = <String>[
+            '        } finally {',
+            ...finallyBody.map((l) => l.isEmpty ? l : '    $l'),
+            '        }',
+          ];
+        }
+
+        // 应用删除和插入
+        final newLines = <String>[];
+        for (var k = 0; k < lines.length; k++) {
+          if (k == insertLine) {
+            // 替换 `}` 为 finally 块（或不替换如果 finallyBlock 为 null）
+            if (finallyBlock != null) {
+              newLines.addAll(finallyBlock);
+            } else {
+              newLines.add(lines[k]); // 保留 `}`
+            }
+          } else if (!toRemove.contains(k)) {
+            newLines.add(lines[k]);
+          }
+        }
+        lines = newLines;
+        changed = true;
+        break;
+      }
+    } while (changed);
+
+    // 模式 2：try-with-resources 清理
+    lines = _cleanupTryWithResources(lines);
+
+    // 模式 3：清理 try-with-resources 的 null 检查 `if (var == null) goto label_X;`
+    // 这些 null 检查在资源管理代码被清理后变得多余
+    final nullCheckRe = RegExp(r'^\s+if \((\w+) == null\) goto (label_\d+);$');
+    for (var i = 0; i < lines.length; i++) {
+      final m = nullCheckRe.firstMatch(lines[i]);
+      if (m == null) continue;
+      final label = m.group(2)!;
+      // 向前查找第一个非空行，检查是否是目标 label
+      // 如果是，说明 null 检查是多余的（goto 到下一有效行）
+      var labelNearby = false;
+      for (var k = i + 1; k < lines.length; k++) {
+        final trimmed = lines[k].trim();
+        if (trimmed.isEmpty) continue; // 跳过空行
+        if (trimmed == label + ':') {
+          labelNearby = true;
+        }
+        break; // 遇到第一个非空行就停止
+      }
+      if (labelNearby) {
+        lines[i] = '';
+        continue;
+      }
+      // 检查目标 label 是否存在，如果不存在（已被清理），移除 null 检查
+      var labelExists = false;
+      for (var k = 0; k < lines.length; k++) {
+        if (k == i) continue;
+        if (lines[k].trim() == label + ':') {
+          labelExists = true;
+          break;
+        }
+      }
+      if (!labelExists) {
+        lines[i] = '';
+      }
+    }
+
+    // 模式 4：清理 finally 块后的孤立 label（合并点）
+    // 这些 label 是 catch 块的 goto 目标，但 catch 块已清理，label 不再被引用
+    final labelRe = RegExp(r'^\s+(label_\d+):$');
+    final gotoLabelRe = RegExp(r'goto (label_\d+);');
+    for (var i = 0; i < lines.length; i++) {
+      final m = labelRe.firstMatch(lines[i]);
+      if (m == null) continue;
+      final label = m.group(1)!;
+      // 检查是否还有 goto 引用此 label
+      var hasRef = false;
+      for (var k = 0; k < lines.length; k++) {
+        if (k == i) continue;
+        if (gotoLabelRe.hasMatch(lines[k]) &&
+            lines[k].contains('goto $label;')) {
+          hasRef = true;
+          break;
+        }
+      }
+      if (!hasRef) {
+        lines[i] = '';
+      }
+    }
+
+    // 清理空行
+    final result = <String>[];
+    var prevEmpty = false;
+    for (final line in lines) {
+      final isEmpty = line.trim().isEmpty;
+      if (isEmpty && prevEmpty) continue;
+      result.add(line);
+      prevEmpty = isEmpty;
+    }
+    return result.join('\n');
+  }
+
+  /// 清理 try-with-resources 生成的 close 调用和异常处理代码
+  List<String> _cleanupTryWithResources(List<String> lines) {
+    // try-with-resources 的字节码模式（以两个资源为例）：
+    //   [业务代码]
+    //   var1.close();            // 正常关闭内层资源
+    //   goto label_A;
+    //   Throwable e1 = /*exception*/;  // var1 异常处理
+    //   var1.close();
+    //   goto label_B;
+    //   Throwable e2 = /*exception*/;  // var1.close() 抛异常
+    //   e1.addSuppressed(e2);
+    // label_B:
+    //   throw e1;
+    // label_A:
+    //   var0.close();            // 正常关闭外层资源
+    //   goto label_C;
+    //   Throwable e3 = /*exception*/;  // var0 异常处理
+    //   var0.close();
+    //   goto label_D;
+    //   e3_alt = /*exception*/;
+    //   var0.addSuppressed(e3_alt);
+    // label_D:
+    //   throw e3;
+    // label_C:
+    //
+    // 清理策略：识别从第一个 `var.close(); goto label_X;` 开始的资源管理块，
+    // 直到对应的 `label_X:` 结束，移除其中的 close/goto/throwable/addSuppressed/throw/label。
+
+    final closeRe = RegExp(r'^\s+(\w+)\.close\(\);$');
+    final gotoRe = RegExp(r'^\s+goto (label_\d+);$');
+    // 匹配 `Throwable pN = /*exception*/;` 或 `java.lang.Throwable pN = /*exception*/;`
+    final exceptionRe =
+        RegExp(r'^\s+(?:java\.lang\.)?Throwable (\w+) = /\*exception\*/;$');
+    final exceptionAssignRe =
+        RegExp(r'^\s+(\w+) = /\*exception\*/;$'); // `p2 = /*exception*/;`
+    final addSuppressedRe = RegExp(r'^\s+(\w+)\.addSuppressed\((\w+)\);$');
+    final throwRe = RegExp(r'^\s+throw (\w+);$');
+    final labelRe = RegExp(r'^\s+(label_\d+):$');
+    // try-with-resources 的 null 检查：`if (var == null) goto label_X;`
+    final nullCheckRe = RegExp(r'^\s+if \((\w+) == null\) goto (label_\d+);$');
+
+    bool changed;
+    do {
+      changed = false;
+      for (var i = 0; i < lines.length - 1; i++) {
+        // 查找起始：`var.close(); goto label_X;`
+        final closeMatch = closeRe.firstMatch(lines[i]);
+        if (closeMatch == null) continue;
+        if (!gotoRe.hasMatch(lines[i + 1])) continue;
+
+        // 找到 goto 的目标 label
+        final gotoMatch = gotoRe.firstMatch(lines[i + 1])!;
+        final targetLabel = gotoMatch.group(1)!;
+
+        // 向后查找 targetLabel 的位置（这标志着整个资源管理块的结束）
+        var labelLine = -1;
+        for (var k = i + 2; k < lines.length; k++) {
+          final lm = labelRe.firstMatch(lines[k]);
+          if (lm != null && lm.group(1) == targetLabel) {
+            labelLine = k;
+            break;
+          }
+        }
+        if (labelLine < 0) continue;
+
+        // 验证 i 到 labelLine 之间是 try-with-resources 模式：
+        // 应包含 `Throwable ... = /*exception*/;` 和 `throw ...;`
+        var hasException = false;
+        var hasThrow = false;
+        for (var k = i; k < labelLine; k++) {
+          if (exceptionRe.hasMatch(lines[k]) ||
+              exceptionAssignRe.hasMatch(lines[k])) {
+            hasException = true;
+          }
+          if (throwRe.hasMatch(lines[k])) hasThrow = true;
+        }
+        if (!hasException || !hasThrow) continue;
+
+        // 清理 i 到 labelLine-1（不含 labelLine）之间的资源管理代码
+        // labelLine 是外层块的开始或合并点，保留
+        for (var k = i; k < labelLine; k++) {
+          final line = lines[k];
+          if (closeRe.hasMatch(line) ||
+              gotoRe.hasMatch(line) ||
+              exceptionRe.hasMatch(line) ||
+              exceptionAssignRe.hasMatch(line) ||
+              addSuppressedRe.hasMatch(line) ||
+              throwRe.hasMatch(line) ||
+              labelRe.hasMatch(line) ||
+              nullCheckRe.hasMatch(line)) {
+            lines[k] = '';
+          }
+        }
+        changed = true;
+        break;
+      }
+    } while (changed);
+
+    return lines;
   }
 
   /// 简化 `if (!cond) { } else { body }` 为 `if (cond) { body }`
@@ -1767,15 +2090,26 @@ class CodePrinter {
 
   /// 根据异常表把 `try { ... } goto end; ... catch ... end:` 还原成 try/catch 块。
   String _structureTryCatch(String source, Map<int, int> offsetToLine) {
-    final lines = source.split('\n');
+    var lines = source.split('\n');
     final gotoRe = RegExp(r'^ {8,}goto (label_\d+);$');
     final labelRe = RegExp(r'^      (label_\d+):$');
     final exceptionRe =
         RegExp(r'^        (\S+(?:<[^>]+>)?) (\w+) = /\*exception\*/;$');
 
-    // 从后往前处理，优先处理内层 try/catch。
-    final entries = List<ExceptionTableEntry>.from(_code.exceptionTable)
+    // 先处理 catch（catchType != 0），再处理 finally（catchType == 0）。
+    // 同类内按 handlerPc 降序，优先处理内层。
+    final catchEntries = _code.exceptionTable
+        .where((e) => e.catchType != 0)
+        .toList()
       ..sort((a, b) => b.handlerPc.compareTo(a.handlerPc));
+    final finallyEntries = _code.exceptionTable
+        .where((e) => e.catchType == 0)
+        .toList()
+      ..sort((a, b) => b.handlerPc.compareTo(a.handlerPc));
+    final entries = [...catchEntries, ...finallyEntries];
+
+    // 记录已处理的 handler，避免 multi-catch 重复处理
+    final processedHandlers = <int>{};
 
     for (final e in entries) {
       final tryStart = offsetToLine[e.startPc];
@@ -1784,6 +2118,19 @@ class CodePrinter {
       if (catchStart <= tryStart || catchStart >= lines.length) continue;
       // 已经转换过或者不是典型 catch 入口的跳过。
       if (!lines[catchStart].contains('/*exception*/')) continue;
+
+      // 检查同一 handler 是否有多个 catch 类型（multi-catch）
+      final sameHandlerEntries = _code.exceptionTable
+          .where((other) => other.handlerPc == e.handlerPc)
+          .toList();
+      final isMultiCatch = sameHandlerEntries.length > 1;
+      final isFinally = e.catchType == 0;
+
+      // multi-catch: 只处理第一个条目，跳过后续相同 handler
+      if (isMultiCatch && !isFinally) {
+        if (processedHandlers.contains(e.handlerPc)) continue;
+        processedHandlers.add(e.handlerPc);
+      }
 
       // 在 try 区域内找到跳过后续 catch 的 goto（其目标标号位于 catch 之后）。
       int? gotoLine;
@@ -1804,10 +2151,31 @@ class CodePrinter {
         if (gotoLine != null) break;
       }
 
+      // 对于 finally 块，try body 结束位置应该用 endPc 而非 goto
+      // finally 的 try 范围是 [startPc, endPc)，catch handler 在另一个位置
+      int? finallyTryEnd;
+      if (isFinally) {
+        final endLine = offsetToLine[e.endPc];
+        if (endLine != null && endLine > tryStart && endLine <= catchStart) {
+          finallyTryEnd = endLine;
+        }
+      }
+
       int tryBodyEnd; // exclusive
       int catchEnd; // inclusive
       int replaceEnd; // exclusive
-      if (gotoLine != null && labelLine != null) {
+      if (isFinally && finallyTryEnd != null) {
+        // finally 块：try body 到 endPc，finally handler 内容作为 finally body
+        tryBodyEnd = finallyTryEnd;
+        catchEnd = _lastNonEmptyLine(lines);
+        // 尝试找到 finally 块后的合并点
+        if (gotoLine != null && labelLine != null && labelLine > catchStart) {
+          catchEnd = labelLine - 1;
+          replaceEnd = labelLine + 1;
+        } else {
+          replaceEnd = catchEnd + 1;
+        }
+      } else if (gotoLine != null && labelLine != null) {
         // try 末尾用 goto 跳过 catch，catch 之后有合并标号。
         tryBodyEnd = gotoLine;
         catchEnd = labelLine - 1;
@@ -1819,16 +2187,37 @@ class CodePrinter {
         catchEnd = _lastNonEmptyLine(lines);
         replaceEnd = catchEnd + 1;
       }
+
+      // 限制 catch 块范围：如果 catch 块内遇到另一个异常 handler
+      // （以 `/*exception*/` 标记开头且不是当前 handler），应在它之前截断。
+      if (!isFinally) {
+        for (var k = catchStart + 1; k <= catchEnd; k++) {
+          if (lines[k].contains('/*exception*/')) {
+            // 检查这是否是另一个 handler 的开始
+            final kOffset = _lineToOffset(lines, k, offsetToLine);
+            if (kOffset != null && kOffset != e.handlerPc) {
+              final isOtherHandler = _code.exceptionTable
+                  .any((other) => other.handlerPc == kOffset);
+              if (isOtherHandler) {
+                catchEnd = k - 1;
+                // replaceEnd 也需要调整：保留到 catchEnd+1
+                replaceEnd = catchEnd + 1;
+                // 如果后面有 label 行也保留
+                if (labelLine != null && labelLine > catchEnd) {
+                  // 不删除 label 行，让后续处理
+                }
+                break;
+              }
+            }
+          }
+        }
+      }
+
       if (catchEnd < catchStart) continue;
       if (tryBodyEnd > catchStart) continue;
 
-      final catchTypeName = e.catchType == 0
-          ? 'Throwable'
-          : DescriptorParser.internalToSourceName(
-              _pool.getClassName(e.catchType));
-
       final tryBody = lines.sublist(tryStart, tryBodyEnd).toList();
-      final catchBody = lines.sublist(catchStart, catchEnd + 1).toList();
+      var catchBody = lines.sublist(catchStart, catchEnd + 1).toList();
 
       // 处理异常变量：去掉 `Exception p1 = /*exception*/;` 这类行，
       // 把后续对该变量的引用统一改为 `e`。
@@ -1847,19 +2236,67 @@ class CodePrinter {
         }
       }
 
-      String typeName = catchTypeName;
-      if (typeName.startsWith('java.lang.')) {
-        typeName = typeName.substring('java.lang.'.length);
+      // 构建 catch 类型名
+      String catchTypeDecl;
+      if (isFinally) {
+        catchTypeDecl = ''; // finally 块无类型
+      } else if (isMultiCatch) {
+        // multi-catch: 合并所有相同 handler 的类型
+        final typeNames = <String>{};
+        for (final she in sameHandlerEntries) {
+          if (she.catchType == 0) continue;
+          var tn = DescriptorParser.internalToSourceName(
+              _pool.getClassName(she.catchType));
+          if (tn.startsWith('java.lang.')) {
+            tn = tn.substring('java.lang.'.length);
+          }
+          typeNames.add(tn);
+        }
+        catchTypeDecl = '${typeNames.join(' | ')} e';
+      } else {
+        var typeName = DescriptorParser.internalToSourceName(
+            _pool.getClassName(e.catchType));
+        if (typeName.startsWith('java.lang.')) {
+          typeName = typeName.substring('java.lang.'.length);
+        }
+        catchTypeDecl = '$typeName e';
       }
 
+      // 如果是 finally 块，需要检查 catchBody 是否包含 athrow（重新抛出）
+      // 真正的 finally 块中如果有 athrow，说明是编译器生成的 finally 复制
+      // 我们需要识别 finally 块并提取真正的 finally 内容
       String indent(String l) => l.isEmpty ? l : '    $l';
+
       final newLines = <String>[
         '        try {',
         ...tryBody.map(indent),
-        '        } catch ($typeName e) {',
-        ...catchBody.map(indent),
-        '        }',
       ];
+
+      if (isFinally) {
+        // finally 块：去掉末尾的 athrow 和异常变量引用
+        // finally 块通常以 `e = /*exception*/; ... athrow` 结尾
+        final cleanedCatchBody = <String>[];
+        for (var i = 0; i < catchBody.length; i++) {
+          final line = catchBody[i].trim();
+          // 跳过 athrow（重新抛出）
+          if (line == 'throw e;' || line == 'athrow') continue;
+          // 跳过 `Throwable e = /*exception*/;`（已在前面处理）
+          if (line.contains('/*exception*/')) continue;
+          cleanedCatchBody.add(catchBody[i]);
+        }
+        // 如果清理后为空，跳过（finally 内容已在 try 中内联）
+        if (cleanedCatchBody.any((l) => l.trim().isNotEmpty)) {
+          newLines.add('        } finally {');
+          newLines.addAll(cleanedCatchBody.map(indent));
+          newLines.add('        }');
+        } else {
+          newLines.add('        }');
+        }
+      } else {
+        newLines.add('        } catch ($catchTypeDecl) {');
+        newLines.addAll(catchBody.map(indent));
+        newLines.add('        }');
+      }
       lines.replaceRange(tryStart, replaceEnd, newLines);
     }
 
@@ -1871,6 +2308,15 @@ class CodePrinter {
       if (lines[i].trim().isNotEmpty) return i;
     }
     return -1;
+  }
+
+  /// 通过行号反查字节码 offset。
+  int? _lineToOffset(
+      List<String> lines, int lineNo, Map<int, int> offsetToLine) {
+    for (final entry in offsetToLine.entries) {
+      if (entry.value == lineNo) return entry.key;
+    }
+    return null;
   }
 
   /// 把 if/else 的各种 goto 形式还原成标准的 if/else 块。
