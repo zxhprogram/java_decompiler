@@ -75,8 +75,8 @@ class CodePrinter {
     if (simple != null) return simple;
 
     final (raw, offsetToLine) = _printStackBased(instructions);
-    var text = _structureIfs(raw);
-    text = _structureTryCatch(text, offsetToLine);
+    var text = _structureTryCatch(raw, offsetToLine);
+    text = _structureIfs(text);
     text = _structurePatternSwitch(text);
     text = _structureIfElse(text);
     text = _structureForEach(text);
@@ -1408,8 +1408,8 @@ class CodePrinter {
   /// 把简单的 `if ... goto label` 伪代码转换成普通的 if 分支。
   String _structureIfs(String source) {
     final lines = source.split('\n');
-    final gotoRe = RegExp(r'^        if \((.+)\) goto (label_\d+);$');
-    final labelRe = RegExp(r'^      (label_\d+):$');
+    final gotoRe = RegExp(r'^( +)if \((.+)\) goto (label_\d+);$');
+    final labelRe = RegExp(r'^( *)(label_\d+):$');
 
     bool changed;
     do {
@@ -1417,7 +1417,7 @@ class CodePrinter {
       final labelMap = <String, int>{};
       for (var i = 0; i < lines.length; i++) {
         final m = labelRe.firstMatch(lines[i]);
-        if (m != null) labelMap[m.group(1)!] = i;
+        if (m != null) labelMap[m.group(2)!] = i;
       }
 
       // 从后往前处理，这样嵌套的 if 可以先被转换成内层 if 块，
@@ -1425,8 +1425,9 @@ class CodePrinter {
       for (var i = lines.length - 1; i >= 0; i--) {
         final m = gotoRe.firstMatch(lines[i]);
         if (m == null) continue;
-        final cond = m.group(1)!;
-        final label = m.group(2)!;
+        final indent = m.group(1)!;
+        final cond = m.group(2)!;
+        final label = m.group(3)!;
         final j = labelMap[label];
         if (j == null || j <= i) continue;
 
@@ -1441,7 +1442,6 @@ class CodePrinter {
         if (bodyHasLabel) continue;
 
         // 当前 goto 之后不能再有其它跳转引用同一标号（未处理的）。
-        // 之前的引用会在后续迭代中处理（外层 if）。
         var otherRefs = false;
         for (var k = i + 1; k < lines.length; k++) {
           if (lines[k].contains('goto $label;')) {
@@ -1453,11 +1453,25 @@ class CodePrinter {
 
         final block = lines.sublist(i + 1, j);
         final newLines = <String>[
-          '        if (${_negateCondition(cond)}) {',
+          '${indent}if (${_negateCondition(cond)}) {',
           ...block.map((l) => l.isEmpty ? l : '    $l'),
-          '        }',
+          '${indent}}',
         ];
-        lines.replaceRange(i, j + 1, newLines);
+
+        // 若之前还有其它跳转引用同一标号（外层 if-goto），
+        // 保留合并标号供外层转换时使用；否则消费掉标号行。
+        bool hasPrevRef = false;
+        for (var k = 0; k < i; k++) {
+          if (lines[k].contains('goto $label;')) {
+            hasPrevRef = true;
+            break;
+          }
+        }
+        if (hasPrevRef) {
+          lines.replaceRange(i, j, newLines);
+        } else {
+          lines.replaceRange(i, j + 1, newLines);
+        }
         changed = true;
         break;
       }
