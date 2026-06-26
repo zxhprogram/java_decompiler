@@ -1455,7 +1455,7 @@ class CodePrinter {
         final newLines = <String>[
           '${indent}if (${_negateCondition(cond)}) {',
           ...block.map((l) => l.isEmpty ? l : '    $l'),
-          '${indent}}',
+          '$indent}',
         ];
 
         // 若之前还有其它跳转引用同一标号（外层 if-goto），
@@ -1524,7 +1524,6 @@ class CodePrinter {
       if (!lines[catchStart].contains('/*exception*/')) continue;
 
       // 在 try 区域内找到跳过后续 catch 的 goto（其目标标号位于 catch 之后）。
-      String? endLabel;
       int? gotoLine;
       int? labelLine;
       for (var k = catchStart - 1; k >= tryStart; k--) {
@@ -1535,7 +1534,6 @@ class CodePrinter {
         for (var j = catchStart; j < lines.length; j++) {
           final lm = labelRe.firstMatch(lines[j]);
           if (lm != null && lm.group(1) == lbl) {
-            endLabel = lbl;
             gotoLine = k;
             labelLine = j;
             break;
@@ -1816,7 +1814,9 @@ class CodePrinter {
 
         // label 下一行应为 if (idx < len) {
         var ifLine = i + 1;
-        while (ifLine < lines.length && lines[ifLine].trim().isEmpty) ifLine++;
+        while (ifLine < lines.length && lines[ifLine].trim().isEmpty) {
+          ifLine++;
+        }
         if (ifLine >= lines.length) continue;
         final ifMatch = ifRe.firstMatch(lines[ifLine]);
         if (ifMatch == null) continue;
@@ -1837,8 +1837,9 @@ class CodePrinter {
 
         // 块内第一条语句应为 elem = arr[idx]
         var firstLine = ifLine + 1;
-        while (firstLine < closeIdx && lines[firstLine].trim().isEmpty)
+        while (firstLine < closeIdx && lines[firstLine].trim().isEmpty) {
           firstLine++;
+        }
         if (firstLine >= closeIdx) continue;
         final elemMatch = elemRe.firstMatch(lines[firstLine]);
         if (elemMatch == null) continue;
@@ -1849,12 +1850,16 @@ class CodePrinter {
 
         // 块内最后一条非空语句应为 idx += 1（倒数第二），最后一条为 goto label
         var lastLine = closeIdx - 1;
-        while (lastLine > ifLine && lines[lastLine].trim().isEmpty) lastLine--;
+        while (lastLine > ifLine && lines[lastLine].trim().isEmpty) {
+          lastLine--;
+        }
         final gotoMatch = gotoRe.firstMatch(lines[lastLine]);
         if (gotoMatch == null || gotoMatch.group(1) != label) continue;
 
         var incLine = lastLine - 1;
-        while (incLine > ifLine && lines[incLine].trim().isEmpty) incLine--;
+        while (incLine > ifLine && lines[incLine].trim().isEmpty) {
+          incLine--;
+        }
         final incMatch = incRe.firstMatch(lines[incLine]);
         if (incMatch == null || incMatch.group(1) != idxVar) continue;
 
@@ -1866,18 +1871,26 @@ class CodePrinter {
         if (idx0Match == null || idx0Match.group(1) != idxVar) continue;
 
         var lenLine = idx0Line - 1;
-        while (lenLine >= 0 && lines[lenLine].trim().isEmpty) lenLine--;
+        while (lenLine >= 0 && lines[lenLine].trim().isEmpty) {
+          lenLine--;
+        }
         if (lenLine < 0) continue;
         final lenMatch = initLenRe.firstMatch(lines[lenLine]);
         if (lenMatch == null ||
             lenMatch.group(1) != lenVar ||
-            lenMatch.group(2) != arrVar) continue;
+            lenMatch.group(2) != arrVar) {
+          continue;
+        }
 
         var arrLine = lenLine - 1;
-        while (arrLine >= 0 && lines[arrLine].trim().isEmpty) arrLine--;
+        while (arrLine >= 0 && lines[arrLine].trim().isEmpty) {
+          arrLine--;
+        }
         if (arrLine < 0) continue;
         final arrMatch = initArrRe.firstMatch(lines[arrLine]);
-        if (arrMatch == null || arrMatch.group(2) != arrVar) continue;
+        if (arrMatch == null || arrMatch.group(2) != arrVar) {
+          continue;
+        }
         final arrayExpr = arrMatch.group(3)!;
 
         // 构造 for-each 体：去掉 elem 声明、idx += 1 和 goto
@@ -1916,7 +1929,9 @@ class CodePrinter {
 
         // 紧跟 label 的下一行应为 `if (cond) {`
         var j = i + 1;
-        while (j < lines.length && lines[j].trim().isEmpty) j++;
+        while (j < lines.length && lines[j].trim().isEmpty) {
+          j++;
+        }
         if (j >= lines.length) continue;
         final ifMatch = ifRe.firstMatch(lines[j]);
         if (ifMatch == null) continue;
@@ -1936,7 +1951,9 @@ class CodePrinter {
 
         // 块内最后一条非空语句应为 `goto label;`
         var g = closeIdx - 1;
-        while (g > j && lines[g].trim().isEmpty) g--;
+        while (g > j && lines[g].trim().isEmpty) {
+          g--;
+        }
         final gotoMatch = gotoRe.firstMatch(lines[g]);
         if (gotoMatch == null || gotoMatch.group(1) != label) continue;
 
@@ -2338,7 +2355,7 @@ class CodePrinter {
 
     // 7. 替换区域：把整个 pattern switch 生成的状态机替换为新的 switch 表达式
     lines.replaceRange(headerStart, lines.length, newSwitch);
-    return lines.join('\n') + '\n';
+    return '${lines.join('\n')}\n';
   }
 
   String? _patternCaseFromBlock(
