@@ -400,9 +400,8 @@ class Decompiler {
 
     final targetFields = <String>{};
     for (final f in _cf.fields) {
-      final isStaticFinal =
-          (f.accessFlags & AccessFlags.ACC_STATIC) != 0 &&
-              (f.accessFlags & AccessFlags.ACC_FINAL) != 0;
+      final isStaticFinal = (f.accessFlags & AccessFlags.ACC_STATIC) != 0 &&
+          (f.accessFlags & AccessFlags.ACC_FINAL) != 0;
       if (!isStaticFinal) continue;
       if (f.attribute<ConstantValueAttribute>() != null) continue;
       targetFields.add(_pool.getString(f.nameIndex));
@@ -683,6 +682,18 @@ class Decompiler {
       } catch (_) {}
     }
 
+    void collectFromSignature(String? sig) {
+      if (sig == null) return;
+      // 泛型签名的原始形式如 Lcom/example/Foo<Lcom/example/Bar;>;
+      final re = RegExp(r'\b[A-Za-z_$][\w$]*(?:/[A-Za-z_$][\w$]*)+\b');
+      for (final m in re.allMatches(sig)) {
+        var raw = m.group(0)!;
+        if (raw.startsWith('L')) raw = raw.substring(1);
+        if (raw.endsWith(';')) raw = raw.substring(0, raw.length - 1);
+        addFqcn(raw);
+      }
+    }
+
     String? classNameFromIndex(int index) {
       final entry = _pool.get(index);
       return switch (entry) {
@@ -771,10 +782,18 @@ class Decompiler {
 
     for (final f in _cf.fields) {
       addDescriptor(_pool.getString(f.descriptorIndex));
+      final sigAttr = f.attribute<SignatureAttribute>();
+      if (sigAttr != null) {
+        collectFromSignature(_pool.getString(sigAttr.signatureIndex));
+      }
       collectFromAttributes(f.attributes);
     }
     for (final m in _cf.methods) {
       addMethodDescriptor(_pool.getString(m.descriptorIndex));
+      final sigAttr = m.attribute<SignatureAttribute>();
+      if (sigAttr != null) {
+        collectFromSignature(_pool.getString(sigAttr.signatureIndex));
+      }
       collectFromAttributes(m.attributes);
     }
     collectFromAttributes(_cf.attributes);

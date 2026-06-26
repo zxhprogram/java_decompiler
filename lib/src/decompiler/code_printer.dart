@@ -2260,6 +2260,40 @@ class CodePrinter {
     }
     if (switchCloseLine == null) return source;
 
+    // 2b. 若 javac 把部分 case 体包在 try/catch 中处理 MatchException，先剥掉该包装
+    int? tryStart;
+    for (var i = switchCloseLine + 1; i < lines.length; i++) {
+      if (lines[i].trim() == 'try {') {
+        tryStart = i;
+        break;
+      }
+    }
+    if (tryStart != null) {
+      int? tryCloseLine;
+      for (var i = tryStart + 1; i < lines.length; i++) {
+        if (lines[i].contains('} catch (Throwable e) {')) {
+          tryCloseLine = i;
+          break;
+        }
+      }
+      if (tryCloseLine != null) {
+        int? catchEndLine;
+        for (var i = tryCloseLine + 1; i < lines.length; i++) {
+          if (lines[i].trim() == '}') {
+            catchEndLine = i;
+            break;
+          }
+        }
+        if (catchEndLine != null) {
+          final inner = lines.sublist(tryStart + 1, tryCloseLine);
+          final unindented = inner
+              .map((l) => l.startsWith('    ') ? l.substring(4) : l)
+              .toList();
+          lines.replaceRange(tryStart, catchEndLine + 1, unindented);
+        }
+      }
+    }
+
     // 3. 解析 case -> label 映射（按 switch 中出现的顺序）
     final caseRe = RegExp(r'^            case (-?\d+): goto (label_\d+);$');
     final defaultRe = RegExp(r'^            default: goto (label_\d+);$');
@@ -2304,6 +2338,10 @@ class CodePrinter {
       if (i != switchCloseLine + 1 && isNewBlockStart(i)) {
         blockStarts.add(i);
       }
+    }
+
+    if (cases.length != blockStarts.length) {
+      return source;
     }
 
     // 找到异常处理块 label_312（默认是 default 后的下一个 label）
