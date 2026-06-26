@@ -269,10 +269,10 @@ class CodePrinter {
 
     for (var idx = 0; idx < ins.length; idx++) {
       final i = ins[idx];
-      offsetToLine[i.offset] = out.lineCount;
       if (labels.contains(i.offset)) {
         out.writeln('      label_${i.offset}:');
       }
+      offsetToLine[i.offset] = out.lineCount;
       void push(String v) => stack.add(v);
 
       final handlerType = handlerTypes[i.offset];
@@ -1503,48 +1503,57 @@ class CodePrinter {
 
     for (final e in entries) {
       final tryStart = offsetToLine[e.startPc];
-      final tryAfterEnd = offsetToLine[e.endPc];
       final catchStart = offsetToLine[e.handlerPc];
       if (tryStart == null || catchStart == null) continue;
-      final searchEnd = tryAfterEnd ?? lines.length - 1;
-      if (searchEnd < tryStart) continue;
-
-      // 在 try 区域及紧邻的下一条指令里找到跳过后续 catch 的 goto。
-      String? endLabel;
-      int? gotoLine;
-      for (var k = searchEnd; k >= tryStart; k--) {
-        final m = gotoRe.firstMatch(lines[k]);
-        if (m != null) {
-          endLabel = m.group(1);
-          gotoLine = k;
-          break;
-        }
-      }
-      if (endLabel == null || gotoLine == null) continue;
-
-      // 找到 catch 块之后的合并标号。
-      int? labelLine;
-      for (var k = catchStart; k < lines.length; k++) {
-        final m = labelRe.firstMatch(lines[k]);
-        if (m != null && m.group(1) == endLabel) {
-          labelLine = k;
-          break;
-        }
-      }
-      if (labelLine == null) continue;
-
-      final catchEnd = labelLine - 1;
-      if (catchEnd < catchStart) continue;
-
+      if (catchStart <= tryStart || catchStart >= lines.length) continue;
       // 已经转换过或者不是典型 catch 入口的跳过。
       if (!lines[catchStart].contains('/*exception*/')) continue;
+
+      // 在 try 区域内找到跳过后续 catch 的 goto（其目标标号位于 catch 之后）。
+      String? endLabel;
+      int? gotoLine;
+      int? labelLine;
+      for (var k = catchStart - 1; k >= tryStart; k--) {
+        if (k < 0) continue;
+        final m = gotoRe.firstMatch(lines[k]);
+        if (m == null) continue;
+        final lbl = m.group(1)!;
+        for (var j = catchStart; j < lines.length; j++) {
+          final lm = labelRe.firstMatch(lines[j]);
+          if (lm != null && lm.group(1) == lbl) {
+            endLabel = lbl;
+            gotoLine = k;
+            labelLine = j;
+            break;
+          }
+        }
+        if (gotoLine != null) break;
+      }
+
+      int tryBodyEnd; // exclusive
+      int catchEnd; // inclusive
+      int replaceEnd; // exclusive
+      if (gotoLine != null && labelLine != null) {
+        // try 末尾用 goto 跳过 catch，catch 之后有合并标号。
+        tryBodyEnd = gotoLine;
+        catchEnd = labelLine - 1;
+        replaceEnd = labelLine + 1;
+      } else {
+        // try 末尾是 return/throw，没有跳过 catch 的 goto；
+        // catch 一直延伸到方法体末尾。
+        tryBodyEnd = catchStart;
+        catchEnd = _lastNonEmptyLine(lines);
+        replaceEnd = catchEnd + 1;
+      }
+      if (catchEnd < catchStart) continue;
+      if (tryBodyEnd > catchStart) continue;
 
       final catchTypeName = e.catchType == 0
           ? 'Throwable'
           : DescriptorParser.internalToSourceName(
               _pool.getClassName(e.catchType));
 
-      final tryBody = lines.sublist(tryStart, gotoLine).toList();
+      final tryBody = lines.sublist(tryStart, tryBodyEnd).toList();
       final catchBody = lines.sublist(catchStart, catchEnd + 1).toList();
 
       // 处理异常变量：去掉 `Exception p1 = /*exception*/;` 这类行，
@@ -1577,10 +1586,17 @@ class CodePrinter {
         ...catchBody.map(indent),
         '        }',
       ];
-      lines.replaceRange(tryStart, labelLine + 1, newLines);
+      lines.replaceRange(tryStart, replaceEnd, newLines);
     }
 
     return lines.join('\n');
+  }
+
+  int _lastNonEmptyLine(List<String> lines) {
+    for (var i = lines.length - 1; i >= 0; i--) {
+      if (lines[i].trim().isNotEmpty) return i;
+    }
+    return -1;
   }
 
   /// 把 if/else 的各种 goto 形式还原成标准的 if/else 块。
