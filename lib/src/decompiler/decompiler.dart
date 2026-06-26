@@ -12,6 +12,10 @@ class Decompiler {
   final bool hideEmptyPublicConstructors;
   late final ConstantPool _pool;
 
+  final Map<String, String> _staticFinalInitializers = {};
+  String? _clinitRemainingBody;
+  bool _clinitSkip = false;
+
   Decompiler(this._cf, {this.hideEmptyPublicConstructors = false}) {
     _pool = _cf.constantPool;
   }
@@ -43,6 +47,7 @@ class Decompiler {
     if (recordAttr != null) {
       _writeRecordBody(sb, className, recordAttr);
     } else {
+      _prepareClinit();
       for (final field in _cf.fields) {
         _writeField(sb, field);
       }
@@ -291,6 +296,59 @@ class Decompiler {
     return false;
   }
 
+  void _prepareClinit() {
+    MethodInfo? clinit;
+    for (final m in _cf.methods) {
+      if (_pool.getString(m.nameIndex) == '<clinit>') {
+        clinit = m;
+        break;
+      }
+    }
+    if (clinit == null) return;
+    final code = clinit.attribute<CodeAttribute>();
+    if (code == null) return;
+
+    final body = CodePrinter(clinit, code, _cf).printBody();
+
+    final thisClassDot = DescriptorParser.internalToSourceName(
+        _pool.getClassName(_cf.thisClass));
+
+    final targetFields = <String>{};
+    for (final f in _cf.fields) {
+      final isStaticFinal =
+          (f.accessFlags & AccessFlags.ACC_STATIC) != 0 &&
+              (f.accessFlags & AccessFlags.ACC_FINAL) != 0;
+      if (!isStaticFinal) continue;
+      if (f.attribute<ConstantValueAttribute>() != null) continue;
+      targetFields.add(_pool.getString(f.nameIndex));
+    }
+
+    final keptLines = <String>[];
+    final assignmentRe = RegExp(r'^        (\S+)\.(\w+) = (.+);$');
+    for (final line in body.split('\n')) {
+      final m = assignmentRe.firstMatch(line);
+      if (m != null &&
+          m.group(1) == thisClassDot &&
+          targetFields.contains(m.group(2))) {
+        final expr = m.group(3)!;
+        if (!expr.contains(';') && !expr.contains('{')) {
+          _staticFinalInitializers[m.group(2)!] = expr;
+          continue;
+        }
+      }
+      keptLines.add(line);
+    }
+
+    final nonBlank = keptLines.where((l) => l.trim().isNotEmpty).toList();
+    final onlyReturn =
+        nonBlank.length == 1 && nonBlank.single.trim() == 'return;';
+    if (nonBlank.isEmpty || onlyReturn) {
+      _clinitSkip = true;
+    } else {
+      _clinitRemainingBody = keptLines.join('\n');
+    }
+  }
+
   void _writeField(StringBuffer sb, FieldInfo field) {
     final name = _pool.getString(field.nameIndex);
     final desc = _pool.getString(field.descriptorIndex);
@@ -301,6 +359,10 @@ class Decompiler {
     final cv = field.attribute<ConstantValueAttribute>();
     if (cv != null && (field.accessFlags & AccessFlags.ACC_STATIC) != 0) {
       sb.write(' = ${_pool.getLiteral(cv.constantValueIndex)}');
+    } else if ((field.accessFlags & AccessFlags.ACC_STATIC) != 0 &&
+        (field.accessFlags & AccessFlags.ACC_FINAL) != 0 &&
+        _staticFinalInitializers.containsKey(name)) {
+      sb.write(' = ${_staticFinalInitializers[name]}');
     }
     sb.writeln(';');
   }
@@ -312,6 +374,15 @@ class Decompiler {
     }
 
     final rawName = _pool.getString(method.nameIndex);
+
+    if (rawName == '<clinit>') {
+      if (_clinitSkip) return;
+      sb.writeln('    static {');
+      sb.write(_clinitRemainingBody);
+      sb.writeln('    }');
+      return;
+    }
+
     final desc = _pool.getString(method.descriptorIndex);
     final sigAttr = method.attribute<SignatureAttribute>();
     var (paramTypes, returnType) = DescriptorParser.parseMethodDescriptor(desc);
