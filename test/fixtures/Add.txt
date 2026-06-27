@@ -13,4 +13,3 @@ record Add(Expr left, Expr right) implements Expr {
         return invokedynamic equals(this, p0);
     }
 }
-

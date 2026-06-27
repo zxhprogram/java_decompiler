@@ -14,14 +14,11 @@ public class v1_0_Basics {
 
         if (p0 > 0) {
             p1 = p0;
-            goto label_23;
-        }
-        if (p0 < 0) {
+        } else if (p0 < 0) {
             p1 = (-p0);
-            goto label_23;
+        } else {
+            p1 = 0;
         }
-        p1 = 0;
-      label_23:
         for (int p2 = 0; p2 < p0; p2++) {
             p1 = (p2 + p1);
         }
@@ -34,31 +31,28 @@ public class v1_0_Basics {
             p4 += 1;
         } while (p4 < p0);
         switch (p0) {
-            case 0: goto label_100;
-            case 1: goto label_105;
-            case 2: goto label_105;
-            default: goto label_111;
+            case 0:
+                p1 = 0;
+                break;
+            case 1:
+            case 2:
+                p1 = 100;
+                break;
+            default:
+                p1 = -1;
         }
-      label_100:
-        p1 = 0;
-        goto label_113;
-      label_105:
-        p1 = 100;
-        goto label_113;
-      label_111:
-        p1 = -1;
-      label_113:
         int[] p5 = { 1, 2, 3 };
         int[][] p6 = new int[2][2];
         p6[0][0] = p5[0];
+      outer:
         for (int p7 = 0; p7 < 3; p7++) {
             int p8 = 0;
             while (p8 < 3) {
                 if (p8 == 1) {
-                    goto label_190;
+                    continue outer;
                 }
                 if (p7 == 2) {
-                    break;
+                    break outer;
                 }
                 p8 += 1;
             }

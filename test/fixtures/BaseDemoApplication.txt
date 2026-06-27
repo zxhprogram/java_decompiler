@@ -28,4 +28,3 @@ public class BaseDemoApplication implements ApplicationRunner {
         System.out.println("project started ...");
     }
 }
-

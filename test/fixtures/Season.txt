@@ -27,4 +27,3 @@ final enum Season {
         Season.$VALUES = Season.$values();
     }
 }
-

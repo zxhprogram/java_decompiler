@@ -57,7 +57,6 @@ public class v7_TryResources {
             case 1:
                 return "stopping";
             case 2:
-                return "toggling";
             case 3:
                 return "toggling";
             default:

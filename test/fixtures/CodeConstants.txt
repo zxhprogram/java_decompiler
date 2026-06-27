@@ -299,4 +299,3 @@ public interface CodeConstants {
         return CodeConstants.isSignaturePolymorphic(p0, p1, false);
     }
 }
-

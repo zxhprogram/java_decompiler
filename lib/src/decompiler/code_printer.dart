@@ -91,6 +91,7 @@ class CodePrinter {
     text = _structurePatternSwitch(text);
     text = _structureSimpleSwitch(text);
     text = _structureIfElse(text);
+    text = _structureIfElseIfChain(text);
     text = _structureForEach(text);
     text = _structureWhileLoops(text);
     text = _structureForLoops(text);

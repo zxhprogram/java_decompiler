@@ -50,56 +50,43 @@ public class v14_SwitchExprFinal {
         }
       label_179:
         switch (p4) {
-            case 0: goto label_224;
-            case 1: goto label_224;
-            case 2: goto label_224;
-            case 3: goto label_229;
-            case 4: goto label_234;
-            case 5: goto label_234;
-            case 6: goto label_239;
-            default: goto label_244;
+            case 0:
+            case 1:
+            case 2:
+                break;
+            case 3:
+                break;
+            case 4:
+            case 5:
+                break;
+            case 6:
+                break;
+            default:
+                throw new IllegalArgumentException("invalid: " + p0);
         }
-      label_224:
-        goto label_258;
-      label_229:
-        goto label_258;
-      label_234:
-        goto label_258;
-      label_239:
-        goto label_258;
-      label_244:
-        throw new IllegalArgumentException("invalid: " + p0);
-      label_258:
         int p1 = 9;
         return p1;
     }
     public String yieldBlock(int p0) {
         switch (p0) {
-            case 1: goto label_28;
-            case 2: goto label_35;
-            default: goto label_40;
+            case 1:
+                String p1 = "one";
+                return p1;
+            case 2:
+                return "two";
+            default:
         }
-      label_28:
-        String p1 = "one";
-        return p1;
-      label_35:
-        return "two";
-      label_40:
-
         return "many";
     }
     public int exhaustive(int p0) {
 
         switch (p0) {
-            case 1: goto label_28;
-            case 2: goto label_28;
-            case 3: goto label_28;
-            default: goto label_35;
+            case 1:
+            case 2:
+            case 3:
+                return (10 * p0);
+            default:
         }
-      label_28:
-        return (10 * p0);
-      label_35:
-
         return p0;
     }
 }

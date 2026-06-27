@@ -398,21 +398,55 @@ extension on CodePrinter {
               .toList();
         }
 
-        // 检查所有 case body 都以 return/throw 结束（无 fallthrough）
-        bool allBodiesTerminate = true;
+        // 确定合并标号（regionEnd 处的 label）：case body 中的 `goto merge;`
+        // 应被替换为 `break;`，而最后一个 body 可以直接 fallthrough 到 merge。
+        String? mergeLabel;
+        if (regionEnd < lines.length) {
+          final lm = anyLabelRe.firstMatch(lines[regionEnd]);
+          if (lm != null) mergeLabel = lm.group(1);
+        }
+
+        // 检查每个 case body 的终止方式：
+        //   - terminates: 以 return/throw 结束（保留原样）
+        //   - breakToMerge: 以 `goto mergeLabel;` 结束（转换为 break;）
+        //   - fallthrough: 不以 goto 结束，且是最后一个 body（直接 fallthrough）
+        //   - unsupported: 其他情况（跳过此 switch）
+        // 同时收集每个 body 是否为空（空 body 只在 fallthrough 时允许）。
+        final bodyKinds = <String, String>{};
+        bool supported = true;
         for (final label in allLabels) {
           final body = extractBody(label);
           if (body.isEmpty) {
-            allBodiesTerminate = false;
-            break;
+            // 空 body：只有当它是最后一个 body 且会 fallthrough 到 merge 时才允许
+            bodyKinds[label] = 'fallthrough';
+            continue;
           }
           final lastLine = body.last.trim();
-          if (!lastLine.startsWith('return') && !lastLine.startsWith('throw')) {
-            allBodiesTerminate = false;
+          if (lastLine.startsWith('return') || lastLine.startsWith('throw')) {
+            bodyKinds[label] = 'terminates';
+          } else if (mergeLabel != null && lastLine == 'goto $mergeLabel;') {
+            bodyKinds[label] = 'breakToMerge';
+          } else if (lastLine.startsWith('goto ')) {
+            // goto 到其他位置 - 不支持
+            supported = false;
+            break;
+          } else {
+            // 不以 goto/return/throw 结束 - fallthrough
+            bodyKinds[label] = 'fallthrough';
+          }
+        }
+        if (!supported) continue;
+
+        // fallthrough 只允许出现在最后一个 body（按位置最靠后的那个）。
+        // 其他 body 必须以 return/throw/breakToMerge 结束。
+        final lastBodyLabel = sortedByPos.last;
+        for (final label in allLabels) {
+          if (label != lastBodyLabel && bodyKinds[label] == 'fallthrough') {
+            supported = false;
             break;
           }
         }
-        if (!allBodiesTerminate) continue;
+        if (!supported) continue;
 
         // 构建 case body（重新缩进到 switch 内部）
         final caseIndent = '$indent    ';
@@ -422,15 +456,46 @@ extension on CodePrinter {
           return '$bodyIndent$trimmed';
         }
 
-        final newLines = <String>['${indent}switch ($selector) {'];
-        for (final (caseValue, caseLabel) in cases) {
-          final body = extractBody(caseLabel);
-          newLines.add('${caseIndent}case $caseValue:');
-          newLines.addAll(body.map(reindent));
+        // 清理 body：去掉末尾的 `goto mergeLabel;`（将在后续按需补 `break;`）
+        List<String> cleanBody(String label) {
+          final body = extractBody(label);
+          if (body.isEmpty) return body;
+          final kind = bodyKinds[label];
+          if (kind == 'breakToMerge') {
+            return body.sublist(0, body.length - 1);
+          }
+          return body;
         }
-        final defaultBody = extractBody(defaultLabel);
+
+        // 按目标 label 分组连续的 case，使共享同一 body 的 case 合并输出：
+        //   case 1:
+        //   case 2:
+        //       body;
+        final newLines = <String>['${indent}switch ($selector) {'];
+        var ci = 0;
+        while (ci < cases.length) {
+          final (caseValue, caseLabel) = cases[ci];
+          newLines.add('${caseIndent}case $caseValue:');
+          // 合并后续共享同一 caseLabel 的 case
+          var cj = ci + 1;
+          while (cj < cases.length && cases[cj].$2 == caseLabel) {
+            newLines.add('${caseIndent}case ${cases[cj].$1}:');
+            cj++;
+          }
+          final body = cleanBody(caseLabel);
+          newLines.addAll(body.map(reindent));
+          if (bodyKinds[caseLabel] == 'breakToMerge') {
+            newLines.add('${bodyIndent}break;');
+          }
+          ci = cj;
+        }
+        // default
         newLines.add('${caseIndent}default:');
-        newLines.addAll(defaultBody.map(reindent));
+        final dBody = cleanBody(defaultLabel);
+        newLines.addAll(dBody.map(reindent));
+        if (bodyKinds[defaultLabel] == 'breakToMerge') {
+          newLines.add('${bodyIndent}break;');
+        }
         newLines.add('$indent}');
 
         // 若 regionEnd 处的 label 是未被引用的孤立尾部 label，一并移除
@@ -439,9 +504,11 @@ extension on CodePrinter {
           final lm = anyLabelRe.firstMatch(lines[regionEnd]);
           if (lm != null) {
             final tailLabel = lm.group(1)!;
+            // 只统计 switch 区域 [i, regionEnd) 之外对该标号的引用：
+            // 区域内的 `goto mergeLabel;` 已被转换为 `break;`。
             bool referenced = false;
             for (var k = 0; k < lines.length; k++) {
-              if (k == regionEnd) continue;
+              if (k >= i && k <= regionEnd) continue;
               if (gotoLabelRe.hasMatch(lines[k]) &&
                   lines[k].contains('goto $tailLabel;')) {
                 referenced = true;

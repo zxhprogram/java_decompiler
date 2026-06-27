@@ -670,6 +670,173 @@ extension on CodePrinter {
     return lines.join('\n');
   }
 
+  /// 把共享同一合并标号的 if 链还原为 if / else if / else 结构。
+  /// 识别模式（_structureIfs 已将条件分支包成 if 块，但 then 末尾残留 goto merge）：
+  ///   if (cond1) {
+  ///       body1;
+  ///       goto merge;
+  ///   }
+  ///   if (cond2) {
+  ///       body2;
+  ///       goto merge;
+  ///   }
+  ///   elseBody;
+  /// merge:
+  /// 转换为：
+  ///   if (cond1) {
+  ///       body1;
+  ///   } else if (cond2) {
+  ///       body2;
+  ///   } else {
+  ///       elseBody;
+  ///   }
+  /// 要求 merge 只被链内 goto 引用，以便一并消除标号。
+  String _structureIfElseIfChain(String source) {
+    var lines = source.split('\n');
+    final openIfRe = RegExp(r'^( {8,})if \((.+)\) \{$');
+    final labelRe = RegExp(r'^ {6,}(label_\d+):$');
+    final gotoAnyRe = RegExp(r'goto (label_\d+);');
+
+    bool changed;
+    do {
+      changed = false;
+      final labelMap = <String, int>{};
+      for (var i = 0; i < lines.length; i++) {
+        final m = labelRe.firstMatch(lines[i]);
+        if (m != null) labelMap[m.group(1)!] = i;
+      }
+
+      for (var i = 0; i < lines.length; i++) {
+        final open = openIfRe.firstMatch(lines[i]);
+        if (open == null) continue;
+        final indent = open.group(1)!;
+        final gotoInBlockRe = RegExp(r'^' + indent + r'    goto (label_\d+);$');
+
+        // 收集连续的、都以 `goto merge;` 结尾的 if 块链。
+        final chain = <(int ifLine, int closeLine, int gotoLine)>[];
+        String? mergeLabel;
+        var curIf = i;
+        while (curIf < lines.length) {
+          final curOpen = openIfRe.firstMatch(lines[curIf]);
+          if (curOpen == null) break;
+          // 找到配对的右花括号。
+          int? curClose;
+          var depth = 1;
+          for (var k = curIf + 1; k < lines.length; k++) {
+            if (lines[k].contains('{')) depth++;
+            if (lines[k].contains('}')) {
+              depth--;
+              if (depth == 0) {
+                curClose = k;
+                break;
+              }
+            }
+          }
+          if (curClose == null) break;
+
+          // 在 then 分支末尾找 `goto merge;`。
+          int? curGoto;
+          String? curMerge;
+          for (var k = curClose - 1; k > curIf; k--) {
+            final gm = gotoInBlockRe.firstMatch(lines[k]);
+            if (gm != null) {
+              curGoto = k;
+              curMerge = gm.group(1);
+              break;
+            }
+          }
+          if (curGoto == null || curMerge == null) break;
+
+          if (mergeLabel == null) {
+            mergeLabel = curMerge;
+          } else if (curMerge != mergeLabel) {
+            break;
+          }
+
+          // 仅当下一个 if 紧跟当前 if 块（允许空行）时才继续延伸链。
+          chain.add((curIf, curClose, curGoto));
+          var next = curClose + 1;
+          while (next < lines.length && lines[next].trim().isEmpty) {
+            next++;
+          }
+          if (next >= lines.length || !openIfRe.hasMatch(lines[next])) break;
+          curIf = next;
+        }
+
+        if (chain.length < 2 || mergeLabel == null) continue;
+
+        final mergeLine = labelMap[mergeLabel];
+        if (mergeLine == null || mergeLine <= chain.last.$2) continue;
+
+        // merge 标号只能被链内 goto 引用，否则不能消除。
+        final expectedRefs = chain.length;
+        var actualRefs = 0;
+        for (var k = 0; k < lines.length; k++) {
+          if (lines[k].contains('goto $mergeLabel;')) actualRefs++;
+        }
+        if (actualRefs != expectedRefs) continue;
+
+        // 链内每个 if 块的 then 体不能包含其他 label（控制流需简单）。
+        bool bodyHasLabel = false;
+        for (final c in chain) {
+          for (var k = c.$1 + 1; k < c.$2; k++) {
+            if (labelRe.hasMatch(lines[k])) {
+              bodyHasLabel = true;
+              break;
+            }
+          }
+          if (bodyHasLabel) break;
+        }
+        if (bodyHasLabel) continue;
+
+        // else 体：最后一个 if 块到 merge 标号之间的代码。
+        final elseBody = lines
+            .sublist(chain.last.$2 + 1, mergeLine)
+            .where((l) => l.trim().isNotEmpty)
+            .toList();
+
+        // else 体中也不能有 label。
+        for (final l in elseBody) {
+          if (labelRe.hasMatch(l)) {
+            bodyHasLabel = true;
+            break;
+          }
+        }
+        if (bodyHasLabel) continue;
+
+        String bodyIndent(String l) =>
+            l.isEmpty ? l : '$indent    ${l.trimLeft()}';
+
+        final newLines = <String>[];
+        for (var ci = 0; ci < chain.length; ci++) {
+          final (ifLine, closeLine, gotoLine) = chain[ci];
+          final cond = openIfRe.firstMatch(lines[ifLine])!.group(2)!;
+          final body = lines.sublist(ifLine + 1, gotoLine);
+          if (ci == 0) {
+            newLines.add('$indent' + 'if ($cond) {');
+          } else {
+            newLines.add('$indent} else if ($cond) {');
+          }
+          newLines.addAll(body.map(bodyIndent));
+        }
+        if (elseBody.isNotEmpty) {
+          newLines.add('$indent} else {');
+          newLines.addAll(elseBody.map(bodyIndent));
+        }
+        newLines.add('$indent}');
+
+        // 替换整条链到 merge 标号（一并消除标号）。
+        lines.replaceRange(chain.first.$1, mergeLine + 1, newLines);
+        changed = true;
+        break;
+      }
+    } while (changed);
+
+    // 链中可能仍残留未被消解的 goto（当 merge 被外部引用时），
+    // 交给后续 _cleanupBreakContinue / _removeUnusedLabels 处理。
+    return lines.join('\n');
+  }
+
   /// 把典型的 `for (T e : arr)` 字节码模式还原为增强 for 循环。
   /// 识别模式（label 形式）：
   ///   arrVar = arrayExpr;
@@ -1129,17 +1296,75 @@ extension on CodePrinter {
         }
         if (endLabelRefs > 0) continue;
 
-        // body 为 j+1 到 incLabelLine（不含）
-        final bodyLines = lines
-            .sublist(j + 1, incLabelLine)
-            .where((l) => l.trim().isNotEmpty)
-            .toList();
+        // 获取 incLabel 名称（用于检测 continue 语句）
+        final incLabelName = labelRe.firstMatch(lines[incLabelLine])?.group(1);
+
+        // 检查 incLabel 是否被 body 外部引用
+        // 若被外部引用，不能安全地转换为 continue（跳过此 for 循环）
+        bool incLabelExternalRef = false;
+        if (incLabelName != null) {
+          for (var n = 0; n < lines.length; n++) {
+            if (n == incLabelLine) continue;
+            if (!lines[n].contains('goto $incLabelName;')) continue;
+            if (n > j && n < incLabelLine) continue; // body 内引用（continue）
+            incLabelExternalRef = true;
+            break;
+          }
+        }
+        if (incLabelExternalRef) continue;
+
+        // 处理 body 中的 continue/break：
+        // - goto incLabel; → continue (或 continue outer; 若在嵌套循环内)
+        // - goto endLabel; 在嵌套循环内 → break outer;
+        // - goto endLabel; 不在嵌套循环内 → 保留（由 _cleanupBreakContinue 处理）
+        final loopStartRe = RegExp(r'^\s*(for|while|do)\b');
+
+        bool isInsideNestedLoop(int gotoIdx) {
+          final stack = <int>[];
+          for (var k = j + 1; k < gotoIdx; k++) {
+            for (var c = 0; c < lines[k].length; c++) {
+              if (lines[k][c] == '{') stack.add(k);
+              if (lines[k][c] == '}' && stack.isNotEmpty) {
+                stack.removeLast();
+              }
+            }
+          }
+          // 栈中所有层级都是嵌套构造（for 循环自身的花括号不在 body 中）
+          for (var s = 0; s < stack.length; s++) {
+            if (loopStartRe.hasMatch(lines[stack[s]])) return true;
+          }
+          return false;
+        }
+
+        bool needsLabel = false;
+        final bodyLines = <String>[];
+        for (var n = j + 1; n < incLabelLine; n++) {
+          final line = lines[n];
+          if (line.trim().isEmpty) continue;
+          final trimmed = line.trim();
+          final indent = line.substring(0, line.length - trimmed.length);
+
+          if (incLabelName != null && trimmed == 'goto $incLabelName;') {
+            if (isInsideNestedLoop(n)) {
+              needsLabel = true;
+              bodyLines.add('${indent}continue outer;');
+            } else {
+              bodyLines.add('${indent}continue;');
+            }
+          } else if (trimmed == 'goto $endLabel;' && isInsideNestedLoop(n)) {
+            needsLabel = true;
+            bodyLines.add('${indent}break outer;');
+          } else {
+            bodyLines.add(line);
+          }
+        }
         final indentedBody = _reindentBlock(bodyLines, '            ');
 
         // 条件取反：if (idxVar >= N) goto end -> while (idxVar < N)
         final cond = op == '>=' ? '$idxVar < $bound' : '$idxVar >= $bound';
 
         final newLines = <String>[
+          if (needsLabel) '      outer:',
           '        for ($initDecl; $cond; $idxVar++) {',
           ...indentedBody,
           '        }',

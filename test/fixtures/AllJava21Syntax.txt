@@ -74,12 +74,13 @@ public class AllJava21Syntax implements Advanced {
             int p5 = p1[p3];
             System.out.println(p5);
         }
+      outer:
         for (int p1 = 0; p1 < 3; p1++) {
             p2 = 0;
             while (p2 < 3) {
                 if (p1 == 1) {
                     if (p2 == 1) {
-                        break;
+                        break outer;
                     }
                 }
                 if (p2 != 0) {
@@ -261,4 +262,3 @@ public class AllJava21Syntax implements Advanced {
         return "hello";
     }
 }
-

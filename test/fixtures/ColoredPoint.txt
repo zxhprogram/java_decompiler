@@ -13,4 +13,3 @@ record ColoredPoint(Point point, String color) {
         return invokedynamic equals(this, p0);
     }
 }
-

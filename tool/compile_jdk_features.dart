@@ -25,9 +25,6 @@ void main(List<String> args) async {
   for (final entry in sources) {
     final version = entry['version'] as String;
     if (onlyVersion != null && version != onlyVersion) continue;
-    final file = entry['file'] as String;
-    final release = entry['release'] as int;
-    final preview = entry['preview'] as bool;
     results.add(await _compile(entry, srcDir, buildDir));
   }
 
@@ -76,7 +73,8 @@ Future<_CompileResult> _compile(
     final err = (res.stderr as String).trim().split('\n').first;
     return _CompileResult(version, file, false, 'javac: $err');
   }
-  return _CompileResult(version, file, true, 'release=$release preview=$preview');
+  return _CompileResult(
+      version, file, true, 'release=$release preview=$preview');
 }
 
 class _CompileResult {
