@@ -1,0 +1,8 @@
+package com.example;
+
+sealed abstract class Shape permits Circle, Polygon, Rectangle, Square {
+    Shape() {
+    }
+    abstract double area();
+}
+

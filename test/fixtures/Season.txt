@@ -1,0 +1,30 @@
+package com.example;
+
+final enum Season {
+    public static final Season SPRING = new Season("SPRING", 0, "warm");
+    public static final Season SUMMER = new Season("SUMMER", 1, "hot");
+    public static final Season AUTUMN = new Season("AUTUMN", 2, "cool");
+    public static final Season WINTER = new Season("WINTER", 3, "cold");
+    private final String feeling;
+    private static final Season[] $VALUES;
+
+    public static Season[] values() {
+        return (([LSeason;) Season.$VALUES.clone());
+    }
+    public static Season valueOf(String p0) {
+        return ((Season) Enum.valueOf(Season.class, p0));
+    }
+    private Season(String p0) {
+        this.feeling = p2;
+    }
+    public String feeling() {
+        return this.feeling;
+    }
+    private static Season[] $values() {
+        return new Season[]{ Season.SPRING, Season.SUMMER, Season.AUTUMN, Season.WINTER };
+    }
+    static {
+        Season.$VALUES = Season.$values();
+    }
+}
+

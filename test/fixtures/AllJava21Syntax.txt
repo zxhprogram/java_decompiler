@@ -1,0 +1,264 @@
+package com.example;
+
+import java.io.BufferedReader;
+import java.io.IOException;
+import java.io.PrintStream;
+import java.io.StringReader;
+import java.io.StringWriter;
+import java.lang.invoke.LambdaMetafactory;
+import java.lang.invoke.MethodHandles;
+import java.lang.invoke.MethodHandles$Lookup;
+import java.lang.invoke.StringConcatFactory;
+import java.lang.runtime.SwitchBootstraps;
+import java.util.Arrays;
+import java.util.List;
+import java.util.Objects;
+import java.util.Optional;
+import java.util.concurrent.ExecutionException;
+import java.util.concurrent.ExecutorService;
+import java.util.concurrent.Executors;
+import java.util.concurrent.Future;
+
+  @MyAnnotation(value = "demo", count = 1)
+public class AllJava21Syntax implements Advanced {
+    private static final int MAX = 100;
+    private transient Object cache;
+    private volatile int counter;
+    private final List list;
+
+    public AllJava21Syntax() {
+        this.list = List.of("a", "b", "c");
+    }
+    public native void nativeMethod();
+    public synchronized void syncMethod() {
+    }
+    public double strictAdd(double p0, double p1) {
+        return (p2 + p0);
+    }
+    @SafeVarargs
+    public final void varargsMethod(List<String>... p0) {
+        List<String>[] p1 = p0;
+        int p2 = p1.length;
+        for (int p3 = 0; p3 < p2; p3++) {
+            List<String> p5 = p1[p3];
+            System.out.println(p5);
+        }
+    }
+    public static Comparable max(Comparable p0, Comparable p1) {
+        if (p0.compareTo(p1) <= 0) return p1;
+        return p0;
+    }
+    public void literals() {
+        int p0 = 1000000;
+        int p1 = 175;
+        double p2 = 3.141592653;
+        float p5 = 0.001500000013038516f;
+        int p6 = 65;
+        int p7 = 1;
+    }
+    public String textBlock() {
+        return "{
+    \"name\": \"Java 21\",
+    \"features\": [\"records\", \"pattern matching\", \"virtual threads\"]
+}
+";
+    }
+    public void loops() {
+        int[] p0 = { 1, 2, 3, 4, 5 };
+        for (int p1 = 0; p1 < p0.length; p1++) {
+            p0[p1] = (2 * p0[p1]);
+        }
+        int[] p1 = p0;
+        int p2 = p1.length;
+        for (int p3 = 0; p3 < p2; p3++) {
+            int p5 = p1[p3];
+            System.out.println(p5);
+        }
+        for (int p1 = 0; p1 < 3; p1++) {
+            p2 = 0;
+            while (p2 < 3) {
+                if (p1 == 1) {
+                    if (p2 == 1) {
+                        break;
+                    }
+                }
+                if (p2 != 0) {
+                    System.out.println(p1 + "," + p2);
+                }
+                p2 += 1;
+            }
+        }
+
+        for (p1 = 0; p1 < 3; p1++) {
+        }
+        do {
+            p1 += -1;
+        } while (p1 > 0);
+    }
+    public void instanceOfPatterns(Object p0) {
+        if ((p0 instanceof String)) {
+            String p1 = ((String) p0);
+            if (p1.length() > 5) {
+                System.out.println(p1.toUpperCase());
+            }
+        }
+         if (p0 instanceof Point(x, y)) {
+            System.out.println((y + x));
+        }
+         if (p0 instanceof ColoredPoint(color, point)) {
+            if ((point instanceof Point)) {
+                int color = point.x();
+                color = point.y();
+                System.out.println(color + ":" + color + "," + color);
+            }
+        }
+    }
+    public String switchPattern(Object p0) {
+        switch (p0) {
+            case null -> "null";
+            case String p3 -> {
+                if (p3.isEmpty()) return "empty string";
+            }
+            case String p4 -> "string: " + p4;
+            case Integer p5 -> {
+                if (p5.intValue() > 0) return "positive int";
+            }
+            case Integer p6 -> "int: " + p6;
+            case Point(x, y) -> {
+                if (x == y) return "diagonal " + x;
+            }
+            case Point p10 -> "point " + p10;
+            case Constant p11 -> "constant " + p11.value();
+            case Add p13 -> "add";
+            default -> "unknown";
+        }
+
+    }
+    public double sealedSwitch(Shape p0) {
+
+        return switch (p0) {
+            case Circle p3 -> p3.area();
+            case Rectangle p4 -> p4.area();
+            case Polygon p5 -> p5.area();
+            default -> throw new IllegalStateException("Unexpected value: " + p0);
+        };
+
+    }
+    public int oldSwitch(int p0) {
+        switch (p0) {
+            case 1:
+                return 10;
+            case 2:
+                return 20;
+            default:
+                int p1 = (2 * p0);
+                return p1;
+        }
+    }
+    public void exceptions() {
+        try {
+            throw new IOException("demo");
+        } catch (IOException | RuntimeException e) {
+            System.out.println(e.getMessage());
+            System.out.println("finally");
+        } finally {
+            System.out.println("finally");
+        }
+
+        try {
+            BufferedReader p0 = new BufferedReader(new StringReader("hello"));
+            StringWriter p1 = new StringWriter();
+            p1.write(p0.readLine());
+
+        } catch (IOException e) {
+            throw new RuntimeException(e);
+        }
+    }
+    public void lambdas() {
+        java.util.function.Function p0 = String::length;
+
+        java.util.function.Consumer p1 = System.out::println;
+        java.util.function.Supplier p2 = () -> "hello";
+        java.util.function.BiFunction p3 = (a, b) -> Integer.valueOf((b.intValue() + a.intValue()));
+        java.util.function.Function p5 = (a) -> a.toUpperCase();
+        this.list.forEach(p1);
+    }
+    public void nestedClasses() {
+        new AllJava21Syntax$1StaticLike(this).say();
+        new AllJava21Syntax$1Inner(this).useOuter();
+        System.out.println(new AllJava21Syntax$1Local(this).value);
+        AllJava21Syntax$1 p0 = new AllJava21Syntax$1(this);
+        p0.run();
+    }
+    public void virtualThreads() throws InterruptedException {
+        Thread p0 = Thread.startVirtualThread(() -> System.out.println("virtual"));
+        p0.join();
+        try {
+            ExecutorService p1 = Executors.newVirtualThreadPerTaskExecutor();
+            Future p2 = p1.submit(() -> "result");
+            System.out.println(((String) p2.get()));
+
+        } catch (ExecutionException e) {
+            throw new RuntimeException(e);
+        }
+    }
+    public void unnamedPatterns(Object p0) {
+         if (p0 instanceof Point(x, _)) {
+            System.out.println("x=" + x);
+        }
+
+        switch (p0) {
+            case Point(x, _) -> {
+                System.out.println("x=" + x);
+            }
+            default -> {}
+        }
+
+        try {
+            int p1 = Integer.parseInt("x");
+        } catch (NumberFormatException _) {
+            System.out.println("bad number");
+        }
+    }
+    private String fetchUser() {
+        return "Alice";
+    }
+    private Integer fetchOrder() {
+        return 42;
+    }
+    public void generics() {
+        List p0 = List.of(1, 2.0, 3L);
+        List p1 = Arrays.asList(new Integer[]{ 1, 2, 3 });
+        Optional p2 = Optional.empty();
+        List p3 = List.of("x", "y");
+    }
+    public static void main(String[] p0) throws Exception {
+        AllJava21Syntax p1 = new AllJava21Syntax();
+        p1.literals();
+        p1.loops();
+        p1.instanceOfPatterns(new Point(1, 2));
+        System.out.println(p1.switchPattern(new Point(3, 3)));
+        System.out.println(p1.sealedSwitch(new Circle(5.0)));
+        p1.exceptions();
+        p1.lambdas();
+        p1.nestedClasses();
+        p1.virtualThreads();
+        System.out.println(p1.textBlock());
+    }
+    private static String lambda$virtualThreads$1() throws Exception {
+        return "result";
+    }
+    private static void lambda$virtualThreads$0() {
+        System.out.println("virtual");
+    }
+    private static String lambda$lambdas$2(String p0) {
+        return p0.toUpperCase();
+    }
+    private static Integer lambda$lambdas$1(Integer p0, Integer p1) {
+        return Integer.valueOf((p1.intValue() + p0.intValue()));
+    }
+    private static String lambda$lambdas$0() {
+        return "hello";
+    }
+}
+

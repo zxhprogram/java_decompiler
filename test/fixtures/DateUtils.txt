@@ -1,0 +1,302 @@
+package com.chinatower.event.util;
+
+import com.chinatower.common.core.utils.StringUtils;
+import com.chinatower.event.constants.Constants;
+import java.math.BigDecimal;
+import java.text.ParseException;
+import java.text.SimpleDateFormat;
+import java.util.Calendar;
+import java.util.Date;
+
+public class DateUtils {
+    private static ThreadLocal DATE_LOCAL;
+    private static ThreadLocal DATE_TIME_LOCAL;
+    private static ThreadLocal DATE_TIME_MS_LOCAL;
+    private static ThreadLocal DATE_HMS_LOCAL;
+    private static ThreadLocal DATE_YM_LOCAL;
+    private static final String DATE_TIME_FORMAT = "yyyy-MM-dd HH:mm:ss";
+    private static final String DATE_TIME_TWO_FORMAT = "yyyy/MM/dd HH:mm:ss";
+    private static final String DATE_TIME_HMS_FORMAT = "HH:mm:ss";
+    private static final String DATE_TIME_YM_FORMAT = "yyyyMM";
+    private static final String DATE_TIME_FORMAT_YMD = "yyyy-MM-dd";
+    private static final String DATE_TIME_FORMAT_MS = "yyyy-MM-dd HH:mm:ss SSS";
+    private static final long HOUR = 3600000L;
+    private static final long MIN = 60000L;
+    private static final long SEC = 1000L;
+    private static final long DAY = 86400000L;
+
+    public DateUtils() {
+    }
+    public static String dateToString(Date p0) {
+        SimpleDateFormat p1 = ((SimpleDateFormat) DateUtils.DATE_TIME_MS_LOCAL.get());
+        if (p1 == null) {
+            p1 = new SimpleDateFormat("yyyy-MM-dd HH:mm:ss SSS");
+            DateUtils.DATE_TIME_MS_LOCAL.set(p1);
+        }
+        return p1.format(p0);
+    }
+    public static String currentDateToString() {
+        SimpleDateFormat p0 = ((SimpleDateFormat) DateUtils.DATE_TIME_LOCAL.get());
+        if (p0 == null) {
+            p0 = new SimpleDateFormat("yyyy-MM-dd HH:mm:ss");
+            DateUtils.DATE_TIME_LOCAL.set(p0);
+        }
+        return p0.format(new Date());
+    }
+    public static Date dateLaterString(String p0, int p1) {
+        Calendar p2 = Calendar.getInstance();
+        try {
+            p2.setTime(new SimpleDateFormat("yyyy-MM-dd HH:mm:ss").parse(p0));
+        } catch (ParseException e) {
+            e.printStackTrace();
+        }
+        p2.add(11, p1);
+        return p2.getTime();
+    }
+    public static Date getDateAfter(Date p0, int p1) {
+        Calendar p2 = Calendar.getInstance();
+        p2.setTime(p0);
+        p2.set(5, (p1 + p2.get(5)));
+        return p2.getTime();
+    }
+    public static String dateToStringNoMS(Date p0) {
+        SimpleDateFormat p1 = ((SimpleDateFormat) DateUtils.DATE_TIME_LOCAL.get());
+        if (p1 == null) {
+            p1 = new SimpleDateFormat("yyyy-MM-dd HH:mm:ss");
+            DateUtils.DATE_TIME_LOCAL.set(p1);
+        }
+        return p1.format(p0);
+    }
+    public static String dateToStringYMD(Date p0) {
+        SimpleDateFormat p1 = ((SimpleDateFormat) DateUtils.DATE_LOCAL.get());
+        if (p1 == null) {
+            p1 = new SimpleDateFormat("yyyy-MM-dd");
+            DateUtils.DATE_LOCAL.set(p1);
+        }
+        return p1.format(p0);
+    }
+    public static String date2Str(Date p0, String p1) {
+        if (null == p0) {
+            return null;
+        }
+        if (null == p1) {
+            String p1 = "yyyy-MM-dd HH:mm:ss";
+        }
+        SimpleDateFormat p2 = new SimpleDateFormat();
+        p2.applyPattern(p1);
+        return p2.format(p0);
+    }
+    public static Date stringToDateYMDHMS(String p0) {
+        Date p1 = null;
+        SimpleDateFormat p2 = ((SimpleDateFormat) DateUtils.DATE_LOCAL.get());
+        if (p2 == null) {
+            p2 = new SimpleDateFormat("yyyy-MM-dd");
+            DateUtils.DATE_LOCAL.set(p2);
+        }
+        try {
+            p1 = p2.parse(p0);
+        } catch (ParseException e) {
+            e.printStackTrace();
+        }
+        return p1;
+    }
+    public static boolean sameMouth(Date p0, Date p1) {
+        Calendar p2 = Calendar.getInstance();
+        Calendar p3 = Calendar.getInstance();
+        p2.setTime(p0);
+        p3.setTime(p1);
+        int p4 = (1 + p2.get(2));
+        int p5 = p2.get(1);
+        int p6 = (1 + p3.get(2));
+        int p7 = p3.get(1);
+        if (p4 == p6) {
+            if (p5 == p7) {
+                return true;
+            }
+        }
+
+        return false;
+    }
+    public static String dateToStringYM(Date p0) {
+        SimpleDateFormat p1 = ((SimpleDateFormat) DateUtils.DATE_YM_LOCAL.get());
+        if (p1 == null) {
+            p1 = new SimpleDateFormat("yyyyMM");
+            DateUtils.DATE_YM_LOCAL.set(p1);
+        }
+        return p1.format(p0);
+    }
+    public static String getlastMonth(String p0) {
+        SimpleDateFormat p1 = new SimpleDateFormat("yyyyMM");
+        Date p2 = null;
+        try {
+            p2 = p1.parse(p0);
+        } catch (ParseException e) {
+            e.printStackTrace();
+        }
+        Calendar p3 = Calendar.getInstance();
+        p3.setTime(p2);
+        p3.add(2, -1);
+        p2 = p3.getTime();
+        return p1.format(p2);
+    }
+    public static Date getForeSixMonth(Date p0) {
+        Calendar p1 = Calendar.getInstance();
+        p1.setTime(p0);
+        p1.add(2, -6);
+        Date p0 = p1.getTime();
+        return p0;
+    }
+    public static Date getCurrentMonthFirstTime() {
+        Calendar p0 = Calendar.getInstance();
+        p0.set(5, 1);
+        p0.set(11, 0);
+        p0.set(12, 0);
+        p0.set(13, 0);
+        return p0.getTime();
+    }
+    public static Date getCurrentMonthEndTime() {
+        Calendar p0 = Calendar.getInstance();
+        p0.set(5, p0.getActualMaximum(5));
+        p0.set(11, 23);
+        p0.set(12, 59);
+        p0.set(13, 59);
+        return p0.getTime();
+    }
+    public static Date stringToDateYM(String p0) {
+        Date p1 = null;
+        SimpleDateFormat p2 = new SimpleDateFormat("yyyyMM");
+        try {
+            p1 = p2.parse(p0);
+        } catch (ParseException e) {
+            e.printStackTrace();
+        }
+        return p1;
+    }
+    public static String getTimeDifference(Date p0, Date p1) {
+        long p2 = (p0.getTime() - p1.getTime());
+        if ((p2 <=> 86400000L) < 0) {
+            long p4 = (p2 / 3600000L);
+            long p6 = ((p2 - (3600000L * p4)) / 60000L);
+            long p8 = (((p2 - (3600000L * p4)) - (60000L * p6)) / 1000L);
+            new Object[4][0] = 0;
+            new Object[4][1] = Long.valueOf(p4);
+            new Object[4][2] = Long.valueOf(p6);
+            new Object[4][3] = Long.valueOf(p8);
+            return String.format("%d天 %02d:%02d:%02d", new Object[4]);
+        }
+        if ((p2 <=> 86400000L) <= 0) return "0天0小时0分0秒";
+        p4 = (p2 / 86400000L);
+        p6 = ((p2 - (86400000L * p4)) / 3600000L);
+        p8 = (((p2 - (86400000L * p4)) - (3600000L * p6)) / 60000L);
+        long p10 = ((((p2 - (86400000L * p4)) - (3600000L * p6)) - (60000L * p8)) / 1000L);
+        return String.format("%d天 %02d:%02d:%02d", new Object[]{ Long.valueOf(p4), Long.valueOf(p6), Long.valueOf(p8), Long.valueOf(p10) });
+    }
+    public static String getTimeDifference2(Date p0, Date p1) {
+        long p2 = (p0.getTime() - p1.getTime());
+        if ((p2 <=> 86400000L) < 0) {
+            long p4 = (p2 / 3600000L);
+            long p6 = ((p2 - (3600000L * p4)) / 60000L);
+            long p8 = (((p2 - (3600000L * p4)) - (60000L * p6)) / 1000L);
+            return new StringBuilder().append(p4).append("小时").append(p6).append("分").append(p8).append("秒").toString();
+        }
+        if ((p2 <=> 86400000L) <= 0) return "0天0小时0分0秒";
+        p4 = (p2 / 86400000L);
+        p6 = ((p2 - (86400000L * p4)) / 3600000L);
+        p8 = (((p2 - (86400000L * p4)) - (3600000L * p6)) / 60000L);
+        long p10 = ((((p2 - (86400000L * p4)) - (3600000L * p6)) - (60000L * p8)) / 1000L);
+        return new StringBuilder().append(p4).append("天").append(p6).append("小时").append(p8).append("分").append(p10).append("秒").toString();
+    }
+    public static int checkIfTimeOut(Integer p0, Date p1) {
+        long p2 = System.currentTimeMillis();
+        long p4 = p1.getTime();
+        if (new BigDecimal((p2 - p4)).compareTo(new BigDecimal(p0.intValue()).multiply(new BigDecimal(1000))) <= 0) return 0;
+        return 1;
+    }
+    public static Date subtractTime(Date p0, int p1) {
+        try {
+            SimpleDateFormat p2 = new SimpleDateFormat("yyyy-MM-dd HH:mm:ss");
+            String p3 = p2.format(Long.valueOf(((i2l(p1)) + p0.getTime())));
+            Date p4 = p2.parse(p3);
+            return p4;
+        } catch (Exception e) {
+            e.printStackTrace();
+            return null;
+        }
+    }
+    public static Date subtractTimeMinutes(Date p0, int p1) {
+        try {
+            Calendar p2 = Calendar.getInstance();
+            p2.setTime(p0);
+            p2.add(13, p1);
+            return p2.getTime();
+        } catch (Exception e) {
+            e.printStackTrace();
+            return null;
+        }
+    }
+    public static Date string2Date(String p0) {
+        Date p1 = null;
+        try {
+            if (p0.contains("/")) {
+                p1 = new SimpleDateFormat("yyyy/MM/dd HH:mm:ss").parse(p0);
+            } else {
+                p1 = new SimpleDateFormat("yyyy-MM-dd HH:mm:ss").parse(p0);
+            }
+        } catch (ParseException e) {
+            e.printStackTrace();
+        }
+        return p1;
+    }
+    public static String getExceedTime(Date p0, String p1) {
+        SimpleDateFormat p2 = ((SimpleDateFormat) DateUtils.DATE_TIME_MS_LOCAL.get());
+        if (StringUtils.isEmpty(p1)) return null;
+        long p3 = (Long.parseLong(p1) + (p0.getTime() / 1000L));
+        return new SimpleDateFormat("yyyy-MM-dd HH:mm:ss").format(Long.valueOf((1000L * p3)));
+    }
+    public static String getNextMonth(String p0) {
+        SimpleDateFormat p1 = new SimpleDateFormat("yyyyMM");
+        Date p2 = null;
+        try {
+            p2 = p1.parse(p0);
+        } catch (ParseException e) {
+            e.printStackTrace();
+        }
+        Calendar p3 = Calendar.getInstance();
+        p3.setTime(p2);
+        p3.add(2, 1);
+        p2 = p3.getTime();
+        return p1.format(p2);
+    }
+    public static Date dateAdd(String p0, int p1, Date p2) {
+        Calendar p3 = Calendar.getInstance();
+        if (p0.toLowerCase().equals("d")) {
+            p3.setTime(p2);
+            p3.set(5, (p1 + p3.get(5)));
+            goto label_119;
+        }
+        if (p0.toLowerCase().equals("h")) {
+            p3.setTime(p2);
+            p3.add(10, p1);
+            goto label_119;
+        }
+        if (p0.toLowerCase().equals("m")) {
+            p3.setTime(p2);
+            p3.add(12, p1);
+            goto label_119;
+        }
+        if (!p0.toLowerCase().equals("s")) return null;
+        p3.setTime(p2);
+        p3.add(13, p1);
+
+      label_119:
+        return p3.getTime();
+    }
+    static {
+        DateUtils.DATE_LOCAL = new ThreadLocal();
+        DateUtils.DATE_TIME_LOCAL = new ThreadLocal();
+        DateUtils.DATE_TIME_MS_LOCAL = new ThreadLocal();
+        DateUtils.DATE_HMS_LOCAL = new ThreadLocal();
+        DateUtils.DATE_YM_LOCAL = new ThreadLocal();
+    }
+}
+
