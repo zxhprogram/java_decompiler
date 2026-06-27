@@ -93,8 +93,46 @@ class CodePrinter {
     text = _cleanupPatternMatchingResidue(text);
     text = _simplifyInstanceofRecordPattern(text);
     text = _removeStackUnderflow(text);
+    text = _simplifyBoxing(text);
     text = _restoreVariableNames(text);
     return text;
+  }
+
+  /// 简化自动装箱调用：
+  /// `Integer.valueOf(1)` → `1`，`Double.valueOf(2.0)` → `2.0` 等。
+  /// 仅当参数为字面量时替换，避免改变语义。
+  String _simplifyBoxing(String source) {
+    final intLit = r'-?\d+';
+    final longLit = r'-?\d+L';
+    final doubleLit = r'-?\d+\.\d+(?:[eE][+-]?\d+)?';
+    final floatLit = r'-?\d+\.\d+[fF]';
+    final prefix = r'(?:java\.lang\.)?';
+
+    source = source.replaceAllMapped(
+      RegExp(prefix + r'Integer\.valueOf\((' + intLit + r')\)'),
+      (m) => m.group(1)!,
+    );
+    source = source.replaceAllMapped(
+      RegExp(prefix + r'Long\.valueOf\((' + longLit + r')\)'),
+      (m) => m.group(1)!,
+    );
+    source = source.replaceAllMapped(
+      RegExp(prefix + r'Double\.valueOf\((' + doubleLit + r')\)'),
+      (m) => m.group(1)!,
+    );
+    source = source.replaceAllMapped(
+      RegExp(prefix + r'Float\.valueOf\((' + floatLit + r')\)'),
+      (m) => m.group(1)!,
+    );
+    source = source.replaceAllMapped(
+      RegExp(prefix + r'Boolean\.valueOf\((true|false)\)'),
+      (m) => m.group(1)!,
+    );
+    source = source.replaceAllMapped(
+      RegExp(prefix + r"Character\.valueOf\(('(?:[^'\\]|\\.)')\)"),
+      (m) => m.group(1)!,
+    );
+    return source;
   }
 
   /// 预处理模式匹配相关的编译器生成代码：
@@ -3583,34 +3621,52 @@ class CodePrinter {
         if (!values.containsKey(firstIdx) || firstIdx != 0) continue;
         if (values.length != size) continue;
 
-        // end+1 处应为 T[] var = new T[N];
-        var declLine = end + 1;
-        while (declLine < lines.length && lines[declLine].trim().isEmpty) {
-          declLine++;
+        // end+1 处可能为 T[] var = new T[N]; 或包含 new T[N] 的内联表达式
+        var nextLine = end + 1;
+        while (nextLine < lines.length && lines[nextLine].trim().isEmpty) {
+          nextLine++;
         }
-        if (declLine >= lines.length) continue;
-        final dm = declRe.firstMatch(lines[declLine]);
-        if (dm == null) continue;
-        // declRe: group1=declType(e.g. int[]), group2=varName, group3=newType(e.g. int), group4=size
-        final declType = dm.group(1)!; // e.g. int[]
-        final varName = dm.group(2)!;
-        final newType = dm.group(3)!; // e.g. int
-        final newSize = int.parse(dm.group(4)!);
-        // 校验：newType 应与 type 一致（去掉 [] 后），size 应一致
-        if (declType != '$newType[]') continue;
-        if (newType != type) continue;
-        if (newSize != size) continue;
+        if (nextLine >= lines.length) continue;
 
-        // 构建数组字面量
-        final elems = <String>[];
-        for (var k = 0; k < size; k++) {
-          elems.add(values[k]!);
+        final dm = declRe.firstMatch(lines[nextLine]);
+        if (dm != null) {
+          // 情况1：变量声明 T[] var = new T[N];
+          final declType = dm.group(1)!; // e.g. int[]
+          final varName = dm.group(2)!;
+          final newType = dm.group(3)!; // e.g. int
+          final newSize = int.parse(dm.group(4)!);
+          if (declType != '$newType[]') continue;
+          if (newType != type) continue;
+          if (newSize != size) continue;
+
+          final elems = <String>[];
+          for (var k = 0; k < size; k++) {
+            elems.add(values[k]!);
+          }
+          final elemsStr = elems.join(', ');
+          final newLine = '        $declType $varName = { $elemsStr };';
+          lines.replaceRange(i, nextLine + 1, [newLine]);
+          changed = true;
+          break;
         }
-        final elemsStr = elems.join(', ');
-        final newLine = '        $declType $varName = { $elemsStr };';
-        lines.replaceRange(i, declLine + 1, [newLine]);
-        changed = true;
-        break;
+
+        // 情况2：内联数组 - 消费行包含 new T[N]（不紧跟 [）
+        final inlineRe = RegExp(r'\bnew ' +
+            RegExp.escape(type) +
+            r'\[' +
+            size.toString() +
+            r'\](?!\[)');
+        if (inlineRe.hasMatch(lines[nextLine])) {
+          final elems = <String>[];
+          for (var k = 0; k < size; k++) {
+            elems.add(values[k]!);
+          }
+          final arrayLiteral = 'new $type[]{ ${elems.join(', ')} }';
+          final replaced = lines[nextLine].replaceAll(inlineRe, arrayLiteral);
+          lines.replaceRange(i, nextLine + 1, [replaced]);
+          changed = true;
+          break;
+        }
       }
     } while (changed);
 
