@@ -105,6 +105,7 @@ class CodePrinter {
     text = _cleanupPatternMatchingResidue(text);
     text = _simplifyInstanceofRecordPattern(text);
     text = _removeStackUnderflow(text);
+    text = _simplifyStoreReturn(text);
     text = _simplifyBoxing(text);
     text = _simplifyConditions(text);
     text = _flattenShortCircuitReturns(text);

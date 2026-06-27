@@ -153,8 +153,7 @@ public class AllJava21Syntax implements Advanced {
             case 2:
                 return 20;
             default:
-                int p1 = (2 * p0);
-                return p1;
+                return (2 * p0);
         }
     }
     public void exceptions() {

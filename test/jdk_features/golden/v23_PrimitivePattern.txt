@@ -71,7 +71,6 @@ public class v23_PrimitivePattern {
                 }
             }
         if (0 == 0) return 0.0;
-        double p1 = ((Double) p0).doubleValue();
-        return p1;
+        return ((Double) p0).doubleValue();
     }
 }

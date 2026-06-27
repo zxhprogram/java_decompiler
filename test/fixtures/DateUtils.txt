@@ -143,8 +143,7 @@ public class DateUtils {
         Calendar p1 = Calendar.getInstance();
         p1.setTime(p0);
         p1.add(2, -6);
-        Date p0 = p1.getTime();
-        return p0;
+        return p1.getTime();
     }
     public static Date getCurrentMonthFirstTime() {
         Calendar p0 = Calendar.getInstance();
@@ -216,8 +215,7 @@ public class DateUtils {
         try {
             SimpleDateFormat p2 = new SimpleDateFormat("yyyy-MM-dd HH:mm:ss");
             String p3 = p2.format(Long.valueOf(((i2l(p1)) + p0.getTime())));
-            Date p4 = p2.parse(p3);
-            return p4;
+            return p2.parse(p3);
         } catch (Exception e) {
             e.printStackTrace();
             return null;

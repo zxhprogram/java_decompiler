@@ -7,27 +7,25 @@ public class v12_SwitchExpr {
             case "MONDAY":
             case "FRIDAY":
             case "SUNDAY":
-                break;
+                return 6;
             case "TUESDAY":
-                break;
+                return 7;
             case "THURSDAY":
             case "SATURDAY":
-                break;
+                return 8;
             case "WEDNESDAY":
-                break;
+                return 9;
             default:
         }
-        int p1 = -1;
-        return p1;
+        return -1;
     }
     public String withBlock(int p0) {
         switch (p0) {
             case 1:
                 String p2 = "one";
-                break;
+                return p2.toUpperCase();
             default:
         }
-        String p1 = "other";
-        return p1;
+        return "other";
     }
 }

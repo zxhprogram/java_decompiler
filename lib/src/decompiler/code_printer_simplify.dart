@@ -452,10 +452,62 @@ extension on CodePrinter {
   }
 
   String _removeStackUnderflow(String source) {
-    return source
-        .split('\n')
-        .where((line) => line.trim() != 'return /*stack underflow*/;')
-        .join('\n');
+    final lines = source.split('\n');
+    // 移除以下两类 stack underflow 死代码:
+    //   1. `return /*stack underflow*/;`
+    //   2. `int pX = /*stack underflow*/;` 紧跟 `return pX;`
+    //      (switch 表达式合并点残留: 所有 case 已 return, merge 点不可达)
+    final result = <String>[];
+    for (var i = 0; i < lines.length; i++) {
+      final trimmed = lines[i].trim();
+      if (trimmed == 'return /*stack underflow*/;') continue;
+      // 检测 `int pX = /*stack underflow*/;` 后跟 `return pX;`
+      final m =
+          RegExp(r'^int (\w+) = /\*stack underflow\*/;$').firstMatch(trimmed);
+      if (m != null) {
+        final varName = m.group(1)!;
+        // 查找下一非空行是否为 `return $varName;`
+        var j = i + 1;
+        while (j < lines.length && lines[j].trim().isEmpty) j++;
+        if (j < lines.length && lines[j].trim() == 'return $varName;') {
+          i = j; // 跳过两行
+          continue;
+        }
+      }
+      result.add(lines[i]);
+    }
+    return result.join('\n');
+  }
+
+  /// 简化 `Type pX = <expr>; return pX;` → `return <expr>;`
+  ///
+  /// switch 表达式合并点经栈式发射后会产生临时变量赋值后立即 return 的模式。
+  /// 此函数将其折叠为直接 return 表达式，使输出更接近源码。
+  String _simplifyStoreReturn(String source) {
+    final lines = source.split('\n');
+    final result = <String>[];
+    for (var i = 0; i < lines.length; i++) {
+      final trimmed = lines[i].trim();
+      // 匹配 `<Type> <var> = <expr>;`
+      final m = RegExp(r'^(?:\w[\w\.\[\]<>]*\s+)?(\w+)\s*=\s*(.+);$')
+          .firstMatch(trimmed);
+      if (m != null) {
+        final varName = m.group(1)!;
+        final expr = m.group(2)!;
+        // 查找下一非空行是否为 `return $varName;`
+        var j = i + 1;
+        while (j < lines.length && lines[j].trim().isEmpty) j++;
+        if (j < lines.length && lines[j].trim() == 'return $varName;') {
+          // 保留原缩进
+          final lead = lines[i].substring(0, lines[i].indexOf(trimmed));
+          result.add('${lead}return $expr;');
+          i = j;
+          continue;
+        }
+      }
+      result.add(lines[i]);
+    }
+    return result.join('\n');
   }
 
   String _simplifyDoubleNegation(String cond) {

@@ -11,25 +11,22 @@ public class v14_SwitchExprFinal {
             case "MONDAY":
             case "FRIDAY":
             case "SUNDAY":
-                break;
+                return 6;
             case "TUESDAY":
-                break;
+                return 7;
             case "THURSDAY":
             case "SATURDAY":
-                break;
+                return 8;
             case "WEDNESDAY":
-                break;
+                return 9;
             default:
                 throw new IllegalArgumentException("invalid: " + p0);
         }
-        int p1 = 9;
-        return p1;
     }
     public String yieldBlock(int p0) {
         switch (p0) {
             case 1:
-                String p1 = "one";
-                return p1;
+                return "one";
             case 2:
                 return "two";
             default:

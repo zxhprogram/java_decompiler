@@ -106,6 +106,161 @@ extension on CodePrinter {
         op == Opcodes.return_;
   }
 
+  /// 检测 switch 表达式合并点模式并返回应 return 的值（如果可处理）。
+  ///
+  /// 模式 A（栈非空时）: goto 目标为 `istore N; iload N; ireturn`
+  ///   - 栈顶值直接 return（由调用方 pop）
+  ///   - 返回空字符串 "" 表示"使用栈顶值"
+  ///
+  /// 模式 B（栈空时）: goto 目标为 `<push V>; istore N; iload N; ireturn`
+  ///   - 返回 V 的字符串表示，调用方直接 emit `return V;`
+  ///
+  /// 不能处理时返回 null。
+  String? _trySwitchExprReturnValue(
+      int offset, Map<int, Instruction> offsetToIns) {
+    final targetIns = offsetToIns[offset];
+    if (targetIns == null) return null;
+    final targetOp = targetIns.opcode;
+
+    // 判断 store/load 指令集
+    bool isStoreOpcode(int op) =>
+        op == Opcodes.istore ||
+        op == Opcodes.lstore ||
+        op == Opcodes.fstore ||
+        op == Opcodes.dstore ||
+        op == Opcodes.astore ||
+        op == Opcodes.istore_0 ||
+        op == Opcodes.istore_1 ||
+        op == Opcodes.istore_2 ||
+        op == Opcodes.istore_3 ||
+        op == Opcodes.lstore_0 ||
+        op == Opcodes.lstore_1 ||
+        op == Opcodes.lstore_2 ||
+        op == Opcodes.lstore_3 ||
+        op == Opcodes.fstore_0 ||
+        op == Opcodes.fstore_1 ||
+        op == Opcodes.fstore_2 ||
+        op == Opcodes.fstore_3 ||
+        op == Opcodes.dstore_0 ||
+        op == Opcodes.dstore_1 ||
+        op == Opcodes.dstore_2 ||
+        op == Opcodes.dstore_3 ||
+        op == Opcodes.astore_0 ||
+        op == Opcodes.astore_1 ||
+        op == Opcodes.astore_2 ||
+        op == Opcodes.astore_3;
+    bool isLoadOpcode(int op) =>
+        op == Opcodes.iload ||
+        op == Opcodes.lload ||
+        op == Opcodes.fload ||
+        op == Opcodes.dload ||
+        op == Opcodes.aload ||
+        op == Opcodes.iload_0 ||
+        op == Opcodes.iload_1 ||
+        op == Opcodes.iload_2 ||
+        op == Opcodes.iload_3 ||
+        op == Opcodes.lload_0 ||
+        op == Opcodes.lload_1 ||
+        op == Opcodes.lload_2 ||
+        op == Opcodes.lload_3 ||
+        op == Opcodes.fload_0 ||
+        op == Opcodes.fload_1 ||
+        op == Opcodes.fload_2 ||
+        op == Opcodes.fload_3 ||
+        op == Opcodes.dload_0 ||
+        op == Opcodes.dload_1 ||
+        op == Opcodes.dload_2 ||
+        op == Opcodes.dload_3 ||
+        op == Opcodes.aload_0 ||
+        op == Opcodes.aload_1 ||
+        op == Opcodes.aload_2 ||
+        op == Opcodes.aload_3;
+
+    // 校验 store; load; return 三段式（从给定 store 偏移开始）
+    bool verifyStoreLoadReturn(int storeOffset) {
+      final loadOffset = _nextInstructionOffset(storeOffset, offsetToIns);
+      if (loadOffset == null) return false;
+      final loadIns = offsetToIns[loadOffset];
+      if (loadIns == null || !isLoadOpcode(loadIns.opcode)) return false;
+      final retOffset = _nextInstructionOffset(loadOffset, offsetToIns);
+      if (retOffset == null) return false;
+      final retIns = offsetToIns[retOffset];
+      return retIns != null && _isReturn(retIns);
+    }
+
+    // 模式 A: 目标本身是 store; load; return
+    if (isStoreOpcode(targetOp) && verifyStoreLoadReturn(offset)) {
+      return ''; // 使用栈顶值
+    }
+
+    // 模式 B: 目标是 push 指令，后面跟 store; load; return
+    final pushValue = _pushInstructionValue(targetIns);
+    if (pushValue != null) {
+      final storeOffset = _nextInstructionOffset(offset, offsetToIns);
+      if (storeOffset != null &&
+          offsetToIns[storeOffset] != null &&
+          isStoreOpcode(offsetToIns[storeOffset]!.opcode) &&
+          verifyStoreLoadReturn(storeOffset)) {
+        return pushValue;
+      }
+    }
+
+    return null;
+  }
+
+  /// 若指令是"压入常量到栈"的指令，返回其值的字符串表示；否则返回 null。
+  String? _pushInstructionValue(Instruction ins) {
+    final op = ins.opcode;
+    switch (op) {
+      case Opcodes.iconst_m1:
+        return '-1';
+      case Opcodes.iconst_0:
+      case Opcodes.iconst_1:
+      case Opcodes.iconst_2:
+      case Opcodes.iconst_3:
+      case Opcodes.iconst_4:
+      case Opcodes.iconst_5:
+        return '${op - Opcodes.iconst_0}';
+      case Opcodes.lconst_0:
+      case Opcodes.lconst_1:
+        return '${op - Opcodes.lconst_0}.0L';
+      case Opcodes.fconst_0:
+      case Opcodes.fconst_1:
+      case Opcodes.fconst_2:
+        return '${op - Opcodes.fconst_0}.0f';
+      case Opcodes.dconst_0:
+      case Opcodes.dconst_1:
+        return '${op - Opcodes.dconst_0}.0';
+      case Opcodes.bipush:
+      case Opcodes.sipush:
+        return '${ins.operands[0]}';
+      case Opcodes.ldc:
+      case Opcodes.ldc_w:
+        return _ldcValue(ins.operands[0] as int);
+      case Opcodes.aconst_null:
+        return 'null';
+      default:
+        return null;
+    }
+  }
+
+  /// 返回 ldc 指令加载的常量的字符串表示。
+  String _ldcValue(int index) {
+    try {
+      return _pool.getLiteral(index);
+    } catch (_) {
+      return 'null';
+    }
+  }
+
+  /// 返回给定偏移量之后的下一条指令偏移量。
+  int? _nextInstructionOffset(int offset, Map<int, Instruction> offsetToIns) {
+    final sortedOffsets = offsetToIns.keys.toList()..sort();
+    final idx = sortedOffsets.indexOf(offset);
+    if (idx < 0 || idx + 1 >= sortedOffsets.length) return null;
+    return sortedOffsets[idx + 1];
+  }
+
   (String, Map<int, int>) _printStackBased(List<Instruction> ins) {
     final buffer = StringBuffer();
     final out = _CountingSink(buffer);
@@ -492,7 +647,25 @@ extension on CodePrinter {
             out.writeln('        return ${pop()};');
             stack.clear();
           } else {
-            out.writeln('        goto label_$target;');
+            // 检测 switch 表达式合并点模式
+            final retVal = _trySwitchExprReturnValue(target, offsetToIns);
+            if (retVal != null) {
+              if (retVal.isEmpty) {
+                // 模式 A: 使用栈顶值
+                if (stack.isNotEmpty) {
+                  out.writeln('        return ${pop()};');
+                  stack.clear();
+                } else {
+                  out.writeln('        goto label_$target;');
+                }
+              } else {
+                // 模式 B: 使用 push 指令的常量值
+                out.writeln('        return $retVal;');
+                stack.clear();
+              }
+            } else {
+              out.writeln('        goto label_$target;');
+            }
           }
         case Opcodes.jsr || Opcodes.jsr_w:
           out.writeln('        // jsr ${i.operands[0]}');
