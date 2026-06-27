@@ -1,0 +1,31 @@
+import java.lang.invoke.LambdaMetafactory;
+import java.lang.invoke.MethodHandles;
+import java.lang.invoke.MethodHandles$Lookup;
+import java.util.function.Function;
+
+public class v11_LambdaVar {
+    public v11_LambdaVar() {
+    }
+    public Function<Integer, Integer> addOne() {
+        return (a) -> Integer.valueOf((1 + a.intValue()));
+    }
+    public Function<String, String> upper() {
+        return (a) -> a.toUpperCase();
+    }
+    public Function<Integer, Integer> mixedAnnotated() {
+        return (a) -> Integer.valueOf((2 * a.intValue()));
+    }
+    public String notBlank(String p0) {
+        if (!p0.isBlank()) return p0.strip();
+        return "<blank>";
+    }
+    private static Integer lambda$mixedAnnotated$0(Integer p0) {
+        return Integer.valueOf((2 * p0.intValue()));
+    }
+    private static String lambda$upper$0(String p0) {
+        return p0.toUpperCase();
+    }
+    private static Integer lambda$addOne$0(Integer p0) {
+        return Integer.valueOf((1 + p0.intValue()));
+    }
+}

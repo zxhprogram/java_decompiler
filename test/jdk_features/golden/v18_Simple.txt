@@ -1,0 +1,23 @@
+import java.util.Iterator;
+import java.util.List;
+import java.util.stream.Stream;
+
+public class v18_Simple {
+    public v18_Simple() {
+    }
+    public int sum(List p0) {
+        int p1 = 0;
+        Iterator p2 = p0.iterator();
+      label_9:
+        if (!p2.hasNext()) return p1;
+        Integer p4 = ((Integer) p2.next());
+        p1 = (p4.intValue() + p1);
+        goto label_9;
+    }
+    public String repeat(String p0, int p1) {
+        return p0.repeat(p1);
+    }
+    public List<Integer> sorted(List<Integer> p0) {
+        return p0.stream().sorted().toList();
+    }
+}

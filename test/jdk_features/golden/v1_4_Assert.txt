@@ -1,0 +1,32 @@
+public class v1_4_Assert {
+    static final boolean $assertionsDisabled;
+
+    public v1_4_Assert() {
+    }
+    public int assertCheck(int p0) {
+        if (v1_4_Assert.$assertionsDisabled == 0) {
+            if (p0 < 0) {
+                throw new AssertionError(new StringBuilder().append("negative value: ").append(p0).toString());
+            }
+        }
+        if (v1_4_Assert.$assertionsDisabled == 0) {
+            if (p0 >= 100) {
+                throw new AssertionError();
+            }
+        }
+        return (2 * p0);
+    }
+    public int withSideEffect(int[] p0, int p1) {
+        if (v1_4_Assert.$assertionsDisabled == 0) {
+            if (p1 < 0) throw new AssertionError();
+            if (p1 >= p0.length) {
+            }
+        }
+        return p0[p1];
+    }
+    static {
+        if (!v1_4_Assert.class.desiredAssertionStatus()) {
+        }
+        v1_4_Assert.$assertionsDisabled = 0;
+    }
+}

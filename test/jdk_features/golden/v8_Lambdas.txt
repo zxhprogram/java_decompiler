@@ -1,0 +1,59 @@
+import java.lang.invoke.LambdaMetafactory;
+import java.lang.invoke.MethodHandles;
+import java.lang.invoke.MethodHandles$Lookup;
+import java.util.List;
+import java.util.Optional;
+import java.util.function.Function;
+import java.util.function.Supplier;
+import java.util.stream.Collectors;
+import java.util.stream.IntStream;
+import java.util.stream.Stream;
+
+public class v8_Lambdas {
+    private final List data;
+
+    public v8_Lambdas(List<String> p0) {
+        this.data = p0;
+    }
+    public Function curriedAdd(int p0) {
+        return (a) -> Integer.valueOf((b.intValue() + a));
+    }
+    public Supplier<String> methodRef() {
+        return this::toString;
+    }
+    public List<String> processed() {
+        return ((List) this.data.stream().filter((a) -> {
+  if (a != null) {
+  if (a.length() > 1) {
+  return true;
+  }
+  }
+  return false;
+}).map(String::toUpperCase).sorted().collect(Collectors.toList()));
+    }
+    public Optional<String> first(String p0) {
+        return this.data.stream().filter((a) -> b.startsWith(a)).findFirst();
+    }
+    public int reduce() {
+        return this.data.stream().mapToInt(String::length).sum();
+    }
+    public String typed() {
+        if (!this.data.isEmpty()) return ((String) this.data.get(0));
+        return null;
+    }
+    private static boolean lambda$first$0(String p0, String p1) {
+        return p1.startsWith(p0);
+    }
+    private static boolean lambda$processed$0(String p0) {
+        if (p0 != null) {
+            if (p0.length() > 1) {
+                return true;
+            }
+        }
+
+        return false;
+    }
+    private static Integer lambda$curriedAdd$0(int p0, Integer p1) {
+        return Integer.valueOf((p1.intValue() + p0));
+    }
+}

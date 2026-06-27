@@ -1,0 +1,12 @@
+import java.lang.reflect.Proxy;
+
+public class v1_3_Proxy {
+    public v1_3_Proxy() {
+    }
+    public v1_3_Proxy$Echo newProxy() {
+        return ((v1_3_Proxy$Echo) Proxy.newProxyInstance(v1_3_Proxy.class.getClassLoader(), new Class[]{ v1_3_Proxy$Echo.class }, new v1_3_Proxy$1(this)));
+    }
+    public String run() {
+        return this.newProxy().echo("hi");
+    }
+}

@@ -1,0 +1,57 @@
+import java.util.HashMap;
+import java.util.Iterator;
+import java.util.List;
+import java.util.Map;
+
+public class v5_Generics {
+    public v5_Generics() {
+    }
+    @v5_Generics$MyAnno(value = "demo", count = 3)
+    public int sum(List p0) {
+        int p1 = 0;
+        Iterator p2 = p0.iterator();
+      label_9:
+        if (!p2.hasNext()) return p1;
+        Integer p4 = ((Integer) p2.next());
+        p1 = (p4.intValue() + p1);
+        goto label_9;
+    }
+    @SafeVarargs
+    public final String concat(String... p0) {
+        StringBuilder p1 = new StringBuilder();
+        String[] p2 = p0;
+        int p3 = p2.length;
+        int p4 = 0;
+      label_17:
+        if (p4 >= p3) return p1.toString();
+        String p5 = p2[p4];
+        p1.append(p5);
+        p4 += 1;
+        goto label_17;
+    }
+    public int useEnum(v5_Generics$Color p0) {
+
+        switch (p0.ordinal()) {
+            case 0: goto label_32;
+            case 1: goto label_34;
+            case 2: goto label_36;
+            default: goto label_38;
+        }
+      label_32:
+        return 1;
+      label_34:
+        return 2;
+      label_36:
+        return 3;
+      label_38:
+        return 0;
+    }
+    public int staticImport(int p0) {
+        return (1 + Math.abs(p0));
+    }
+    public Map<String, Integer> genericMap() {
+        HashMap p0 = new HashMap();
+        p0.put("a", 1);
+        return p0;
+    }
+}

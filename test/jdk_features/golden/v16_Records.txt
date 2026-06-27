@@ -1,0 +1,32 @@
+import java.lang.invoke.MethodHandles;
+import java.lang.invoke.MethodHandles$Lookup;
+import java.lang.invoke.StringConcatFactory;
+
+public class v16_Records {
+    public v16_Records() {
+    }
+    public String describe(Object p0) {
+        if ((p0 instanceof v16_Records$Point)) {
+            v16_Records$Point p1 = ((v16_Records$Point) p0);
+            return "point " + p1.x() + "," + p1.y();
+        }
+        if ((p0 instanceof String)) {
+            String p1 = ((String) p0);
+            if (p1.length() > 3) {
+                return "long string: " + p1;
+            }
+        }
+        if (!(p0 instanceof Integer)) return "other";
+        Integer p1 = ((Integer) p0);
+        return "int: " + p1;
+    }
+    public double area(v16_Records$Shape p0) {
+        if ((p0 instanceof v16_Records$Circle)) {
+            v16_Records$Circle p1 = ((v16_Records$Circle) p0);
+            return (p1.r() * (p1.r() * 3.141592653589793));
+        }
+        if (!(p0 instanceof v16_Records$Square)) return 0.0;
+        v16_Records$Square p1 = ((v16_Records$Square) p0);
+        return (p1.side() * p1.side());
+    }
+}

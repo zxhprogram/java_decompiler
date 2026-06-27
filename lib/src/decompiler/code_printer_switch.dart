@@ -2,8 +2,6 @@ part of 'code_printer.dart';
 
 /// switch 语句结构化：pattern switch 与简单 switch 还原。
 extension on CodePrinter {
-
-
   /// 尝试把 Java 21 的 pattern switch 状态机还原成可读的 switch 表达式。
   /// 这只是一个启发式优化，针对 `invokedynamic typeSwitch` 生成的典型字节码。
   String _structurePatternSwitch(String source) {
@@ -205,6 +203,18 @@ extension on CodePrinter {
       return source;
     }
 
+    // case 块在源码中必须按 case 顺序单调递增；当 switch 表的 case 值顺序
+    // 与源码中 label 出现顺序不一致时（null case、record 模式、guard 等），
+    // 会出现 end < start 导致 sublist 越界。此时放弃结构化，原样返回。
+    for (var ci = 1; ci < blockStarts.length; ci++) {
+      if (blockStarts[ci] <= blockStarts[ci - 1]) return source;
+    }
+    if (defaultStartLine != null &&
+        blockStarts.isNotEmpty &&
+        defaultStartLine <= blockStarts.last) {
+      return source;
+    }
+
     // 5. 逐个处理块，生成 case 子句
     final caseLines = <({bool isExpr, String body})>[];
     for (var ci = 0; ci < cases.length; ci++) {
@@ -212,6 +222,7 @@ extension on CodePrinter {
       final end = (ci + 1 < blockStarts.length)
           ? blockStarts[ci + 1]
           : (defaultStartLine ?? lines.length);
+      if (end <= start) return source;
       final block = lines.sublist(start, end);
       final caseLine = _patternCaseFromBlock(
         cases[ci].value,
@@ -226,6 +237,7 @@ extension on CodePrinter {
     // default 块
     if (defaultStartLine != null) {
       final end = exceptionStartLine ?? lines.length;
+      if (end <= defaultStartLine) return source;
       final block = lines.sublist(defaultStartLine, end);
       final defaultLine =
           _patternCaseFromBlock(null, block, sel, st, swLabel, isDefault: true);

@@ -1,0 +1,91 @@
+import java.io.PrintStream;
+
+public class v1_0_Basics {
+    static int staticField;
+    final double constant;
+
+    public v1_0_Basics() {
+        this.constant = 3.14;
+        System.out.println("instance init");
+    }
+    public int controlFlow(int p0) {
+
+        int p1 = 0;
+
+        if (p0 > 0) {
+            p1 = p0;
+            goto label_23;
+        }
+        if (p0 < 0) {
+            p1 = (-p0);
+            goto label_23;
+        }
+        p1 = 0;
+      label_23:
+        for (int p2 = 0; p2 < p0; p2++) {
+            p1 = (p2 + p1);
+        }
+        for (p2 = 0; p2 < p0; p2++) {
+            p1 = (p2 + p1);
+        }
+        int p4 = 0;
+        do {
+            p1 = (p4 + p1);
+            p4 += 1;
+        } while (p4 < p0);
+        switch (p0) {
+            case 0: goto label_100;
+            case 1: goto label_105;
+            case 2: goto label_105;
+            default: goto label_111;
+        }
+      label_100:
+        p1 = 0;
+        goto label_113;
+      label_105:
+        p1 = 100;
+        goto label_113;
+      label_111:
+        p1 = -1;
+      label_113:
+        int[] p5 = { 1, 2, 3 };
+        int[][] p6 = new int[2][2];
+        p6[0][0] = p5[0];
+        for (int p7 = 0; p7 < 3; p7++) {
+            int p8 = 0;
+            while (p8 < 3) {
+                if (p8 == 1) {
+                    goto label_190;
+                }
+                if (p7 == 2) {
+                    break;
+                }
+                p8 += 1;
+            }
+        }
+
+        return p1;
+    }
+    public String tryCatch(String p0) {
+        try {
+            int p1 = Integer.parseInt(p0);
+            String p2 = new StringBuilder().append("ok:").append(p1).toString();
+            System.out.println("finally");
+            return p2;
+            NumberFormatException p1 = /*exception*/;
+            String p2 = "bad";
+            System.out.println("finally");
+            return p2;
+        } catch (RuntimeException _) {
+            p2 = "runtime";
+            System.out.println("finally");
+            return p2;
+        } finally {
+            System.out.println("finally");
+        }
+    }
+    static {
+        v1_0_Basics.staticField = 10;
+        v1_0_Basics.staticField = 20;
+    }
+}

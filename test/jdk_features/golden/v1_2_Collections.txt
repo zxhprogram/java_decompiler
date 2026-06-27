@@ -1,0 +1,41 @@
+import java.util.ArrayList;
+import java.util.Collection;
+import java.util.Collections;
+import java.util.Iterator;
+import java.util.List;
+
+public class v1_2_Collections implements Comparable {
+    private final int key;
+
+    public v1_2_Collections(int p0) {
+        this.key = p0;
+    }
+    public strictfp double computeStrict(double p0, double p1) {
+        return ((p0 / p2) + (p2 * p0));
+    }
+    public int compareTo(v1_2_Collections p0) {
+        return Integer.compare(this.key, p0.key);
+    }
+    public List<Integer> sortAndIterate(Collection<Integer> p0) {
+        ArrayList p1 = new ArrayList(p0);
+        Collections.sort(p1);
+        Iterator p2 = p1.iterator();
+        int p3 = 0;
+      label_23:
+        if (!p2.hasNext()) return p1;
+        p3 = (((Integer) p2.next()).intValue() + p3);
+        goto label_23;
+    }
+    public int sum(Collection p0) {
+        int p1 = 0;
+        Iterator p2 = p0.iterator();
+      label_9:
+        if (!p2.hasNext()) return p1;
+        Integer p4 = ((Integer) p2.next());
+        p1 = (p4.intValue() + p1);
+        goto label_9;
+    }
+    public int compareTo(Object p0) {
+        return this.compareTo(((v1_2_Collections) p0));
+    }
+}

@@ -2,8 +2,6 @@ part of 'code_printer.dart';
 
 /// 栈式字节码发射：将指令序列翻译为中间文本，含类型推断与变量命名。
 extension on CodePrinter {
-
-
   String? _trySimplePattern(List<Instruction> ins) {
     final name = _pool.getString(_method.nameIndex);
     final isStatic = (_method.accessFlags & AccessFlags.ACC_STATIC) != 0;
@@ -550,10 +548,16 @@ extension on CodePrinter {
           push('new $etype[${pop()}]');
         case Opcodes.multianewarray:
           final dims = i.operands[1] as int;
-          final etype = DescriptorParser.internalToSourceName(
+          // operand[0] 指向 CpClass，其名为字段描述符（如 `[[I` 或 `[Ljava/lang/Object;`）。
+          // 解析为源码形式（如 `int[][]`），再把前 dims 个 `[]` 替换为 `[arg]`。
+          final fullType = DescriptorParser.parseFieldDescriptor(
               _pool.getClassName(i.operands[0] as int));
-          final args = List.generate(dims, (_) => pop()).reversed.join(', ');
-          push('new $etype[$args]');
+          final args = List.generate(dims, (_) => pop()).reversed.toList();
+          var rendered = fullType;
+          for (var d = 0; d < dims; d++) {
+            rendered = rendered.replaceFirst('[]', '[${args[d]}]');
+          }
+          push('new $rendered');
         case Opcodes.arraylength:
           push('${pop()}.length');
         case Opcodes.athrow:
@@ -1271,7 +1275,7 @@ extension on CodePrinter {
           }
           push(_TypedValue('',
               type: DescriptorParser.parseFieldDescriptor(
-                _pool.getString(i.operands[0] as int),
+                _pool.getClassName(i.operands[0] as int),
               )));
           break;
 
@@ -1379,7 +1383,6 @@ extension on CodePrinter {
   ///   if (A) return 1;
   ///   if (!B) return 0;
 
-
   (String className, String fieldName, String descriptor) _fieldRef(int index) {
     final ref = _pool.getFieldref(index);
     final cls = DescriptorParser.internalToSourceName(
@@ -1417,7 +1420,6 @@ extension on CodePrinter {
 
   /// 解析 LambdaMetafactory.metafactory 调用，返回方法引用或 lambda 表达式字符串。
   /// 返回 null 表示无法解析。
-
 
   /// 把 StringConcatFactory.makeConcatWithConstants 的 recipe 还原成字符串拼接表达式。
   String _formatStringConcat(String recipe, List<String> args) {
@@ -1595,7 +1597,6 @@ extension on CodePrinter {
   /// 尝试把 Java 21 的 pattern switch 状态机还原成可读的 switch 表达式。
   /// 这只是一个启发式优化，针对 `invokedynamic typeSwitch` 生成的典型字节码。
 
-
   /// 在一行中简化 java.lang. 类型前缀
   String _simplifyTypeNamesInLine(String line) {
     return line.replaceAllMapped(
@@ -1609,8 +1610,6 @@ extension on CodePrinter {
     if (type.startsWith(prefix)) return type.substring(prefix.length);
     return type;
   }
-
-
 
   /// 利用 LocalVariableTable 把生成的 pN 变量名还原成源码中的名字。
   String _restoreVariableNames(String source) {

@@ -1,0 +1,81 @@
+import java.io.PrintStream;
+import java.lang.invoke.LambdaMetafactory;
+import java.lang.invoke.MethodHandles;
+import java.lang.invoke.MethodHandles$Lookup;
+import java.lang.invoke.StringConcatFactory;
+import java.lang.runtime.SwitchBootstraps;
+import java.util.Objects;
+
+public class v19_VirtualThreads {
+    public v19_VirtualThreads() {
+    }
+    public String describe(Object p0) {
+        Object p1 = p0;
+
+        int p2 = 0;
+      label_4:
+        switch (invokedynamic typeSwitch(p1, p2)) {
+            case -1: goto label_149;
+            case 0: goto label_40;
+            case 1: goto label_104;
+            case 2: goto label_138;
+            default: goto label_154;
+        }
+      label_40:
+        v19_VirtualThreads$Point p3 = ((v19_VirtualThreads$Point) p1);
+        int p6 = p3.x();
+        int p7 = p6;
+
+        int p4 = p6;
+        p6 = p3.y();
+        p7 = p6;
+
+        int p5 = p6;
+        goto label_92;
+
+        p2 = 1;
+        goto label_4;
+      label_92:
+        return "point " + p4 + "," + p5;
+      label_104:
+        v19_VirtualThreads$Circle p6 = ((v19_VirtualThreads$Circle) p1);
+        if ((p6.r() <=> 0.0) > 0) return "circle r=" + p6.r();
+        p2 = 2;
+        goto label_4;
+      label_138:
+        v19_VirtualThreads$Circle p7 = ((v19_VirtualThreads$Circle) p1);
+        return "circle";
+      label_149:
+        return "null";
+      label_154:
+        return "other";
+
+    }
+    public double area(v19_VirtualThreads$Shape p0) {
+
+        v19_VirtualThreads$Shape p1 = p0;
+        int p2 = 0;
+        switch (invokedynamic typeSwitch(p1, p2)) {
+            case 0: goto label_54;
+            case 1: goto label_78;
+            default: goto label_44;
+        }
+      label_44:
+        throw new MatchException(null, null);
+      label_54:
+        v19_VirtualThreads$Circle p3 = ((v19_VirtualThreads$Circle) p1);
+        return (p3.r() * (p3.r() * 3.141592653589793));
+      label_78:
+        v19_VirtualThreads$Box p4 = ((v19_VirtualThreads$Box) p1);
+
+        return (p4.h() * p4.w());
+    }
+    public String virtualThread() throws InterruptedException {
+        Thread p0 = Thread.startVirtualThread(() -> System.out.println("hi"));
+        p0.join();
+        return p0.toString();
+    }
+    private static void lambda$virtualThread$0() {
+        System.out.println("hi");
+    }
+}

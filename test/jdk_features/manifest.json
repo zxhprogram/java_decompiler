@@ -1,0 +1,196 @@
+{
+  "_comment": "JDK 1.0 -> 24 反编译兼容性测试清单。release 指定 javac --release 值；preview 为 true 时附加 --enable-preview (仅对最新 release=24 有效)。version 为该测试所代表的 JDK 版本，features 列出该版本引入并在此文件中覆盖的语法特性。注意: JDK 24 的 javac 无法用 --enable-preview 重新编译历史版本的预览特性；因此已转正的预览特性用其 final 版本编译，仍为预览的特性用 release=24 --enable-preview 编译。",
+  "sources": [
+    {
+      "file": "v1_0_Basics.java",
+      "release": 8,
+      "preview": false,
+      "version": "1.0",
+      "features": ["类/接口", "基本类型与数组", "if/else/while/for/do-while/switch", "try-catch-finally", "labeled break/continue", "静态/实例初始化块"]
+    },
+    {
+      "file": "v1_1_InnerClasses.java",
+      "release": 8,
+      "preview": false,
+      "version": "1.1",
+      "features": ["内部类", "匿名类", "局部类", "成员类"]
+    },
+    {
+      "file": "v1_2_Collections.java",
+      "release": 8,
+      "preview": false,
+      "version": "1.2",
+      "features": ["strictfp", "Comparable", "Iterator", "集合框架"]
+    },
+    {
+      "file": "v1_3_Proxy.java",
+      "release": 8,
+      "preview": false,
+      "version": "1.3",
+      "features": ["(无新语法) 动态代理 API"]
+    },
+    {
+      "file": "v1_4_Assert.java",
+      "release": 8,
+      "preview": false,
+      "version": "1.4",
+      "features": ["assert 断言语句"]
+    },
+    {
+      "file": "v5_Generics.java",
+      "release": 8,
+      "preview": false,
+      "version": "5",
+      "features": ["泛型", "枚举", "注解", "可变参数", "自动装箱", "增强 for", "静态导入", "协变返回类型"]
+    },
+    {
+      "file": "v6_Legacy.java",
+      "release": 8,
+      "preview": false,
+      "version": "6",
+      "features": ["(无新语法) @Override 用于接口方法"]
+    },
+    {
+      "file": "v7_TryResources.java",
+      "release": 8,
+      "preview": false,
+      "version": "7",
+      "features": ["try-with-resources", "multi-catch", "diamond <>", "switch-on-String", "数字字面量下划线/二进制"]
+    },
+    {
+      "file": "v8_Lambdas.java",
+      "release": 8,
+      "preview": false,
+      "version": "8",
+      "features": ["Lambda", "方法引用", "接口默认方法", "接口静态方法", "Stream", "Optional", "类型注解"]
+    },
+    {
+      "file": "v9_InterfacePrivate.java",
+      "release": 9,
+      "preview": false,
+      "version": "9",
+      "features": ["接口私有方法", "集合工厂方法 List.of/Map.of", "effectively-final try-with-resources"]
+    },
+    {
+      "file": "v10_Var.java",
+      "release": 10,
+      "preview": false,
+      "version": "10",
+      "features": ["var 局部变量类型推断"]
+    },
+    {
+      "file": "v11_LambdaVar.java",
+      "release": 11,
+      "preview": false,
+      "version": "11",
+      "features": ["Lambda 形参使用 var"]
+    },
+    {
+      "file": "v12_SwitchExpr.java",
+      "release": 14,
+      "preview": false,
+      "version": "12",
+      "features": ["switch 表达式 (12 preview -> 14 final)", "yield"]
+    },
+    {
+      "file": "v13_TextBlock.java",
+      "release": 15,
+      "preview": false,
+      "version": "13",
+      "features": ["文本块 (13 preview -> 15 final)", "switch 表达式 yield"]
+    },
+    {
+      "file": "v14_SwitchExprFinal.java",
+      "release": 14,
+      "preview": false,
+      "version": "14",
+      "features": ["switch 表达式 (final)"]
+    },
+    {
+      "file": "v15_TextBlock.java",
+      "release": 15,
+      "preview": false,
+      "version": "15",
+      "features": ["文本块 (final)"]
+    },
+    {
+      "file": "v16_Records.java",
+      "release": 16,
+      "preview": false,
+      "version": "16",
+      "features": ["record (final)", "instanceof 模式匹配 (final)"]
+    },
+    {
+      "file": "v17_Sealed.java",
+      "release": 17,
+      "preview": false,
+      "version": "17",
+      "features": ["sealed 类 (final)", "permits"]
+    },
+    {
+      "file": "v18_Simple.java",
+      "release": 18,
+      "preview": false,
+      "version": "18",
+      "features": ["(无新语法) 基础回归"]
+    },
+    {
+      "file": "v19_VirtualThreads.java",
+      "release": 21,
+      "preview": false,
+      "version": "19",
+      "features": ["虚拟线程 (19 preview -> 21 final)", "record 模式 (19 preview -> 21 final)", "switch 模式 (19 preview -> 21 final)"]
+    },
+    {
+      "file": "v20_RecordPatterns.java",
+      "release": 21,
+      "preview": false,
+      "version": "20",
+      "features": ["record 模式 (20 2nd preview -> 21 final)", "switch 模式 (20 2nd preview -> 21 final)"]
+    },
+    {
+      "file": "v21_PatternSwitch.java",
+      "release": 21,
+      "preview": false,
+      "version": "21",
+      "features": ["switch 模式匹配 (final)", "record 模式 (final)", "虚拟线程 (final)", "SequencedCollection"]
+    },
+    {
+      "file": "v22_Unnamed.java",
+      "release": 22,
+      "preview": false,
+      "version": "22",
+      "features": ["未命名变量与模式 _ (final)"]
+    },
+    {
+      "file": "v23_PrimitivePattern.java",
+      "release": 24,
+      "preview": true,
+      "version": "23",
+      "features": ["原始类型模式 (23 preview, 24 仍 preview)"]
+    },
+    {
+      "file": "v24_FlexibleConstructor.java",
+      "release": 24,
+      "preview": true,
+      "version": "24",
+      "features": ["灵活构造器体 (24 final)", "模块导入声明 (24 preview)", "原始类型模式 (2nd preview)"]
+    },
+    {
+      "file": "v24_FlexibleConstructor.java",
+      "classFile": "v24_FlexibleConstructor$Derived.class",
+      "release": 24,
+      "preview": true,
+      "version": "24",
+      "features": ["灵活构造器体内部类 (super 之前的语句)"]
+    },
+    {
+      "file": "v24_FlexibleConstructor.java",
+      "classFile": "v24_FlexibleConstructor$Range.class",
+      "release": 24,
+      "preview": true,
+      "version": "24",
+      "features": ["record 紧凑构造器 (24 final)"]
+    }
+  ]
+}

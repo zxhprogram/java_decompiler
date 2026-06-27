@@ -1,0 +1,34 @@
+public class v13_TextBlock {
+    public v13_TextBlock() {
+    }
+    public String json() {
+        return "{
+  \"name\": \"Java 13\",
+  \"preview\": true
+}
+";
+    }
+    public String multiLine() {
+        String p0 = "SELECT *
+FROM users
+WHERE active = true
+";
+        return p0.trim();
+    }
+    public int withYield(int p0) {
+        switch (p0) {
+            case 1: goto label_28;
+            case 2: goto label_33;
+            default: goto label_41;
+        }
+      label_28:
+        goto label_42;
+      label_33:
+        int p2 = (2 * p0);
+        goto label_42;
+      label_41:
+      label_42:
+        int p1 = 0;
+        return p1;
+    }
+}

@@ -1,0 +1,34 @@
+import java.lang.invoke.MethodHandles;
+import java.lang.invoke.MethodHandles$Lookup;
+import java.lang.invoke.StringConcatFactory;
+
+public class v17_Sealed {
+    public v17_Sealed() {
+    }
+    public String classify(v17_Sealed$Shape p0) {
+        if ((p0 instanceof v17_Sealed$Circle)) {
+            v17_Sealed$Circle p1 = ((v17_Sealed$Circle) p0);
+            return "circle r=" + p1.r;
+        }
+        if ((p0 instanceof v17_Sealed$Rectangle)) {
+            v17_Sealed$Rectangle p1 = ((v17_Sealed$Rectangle) p0);
+            return "rect " + p1.w + "x" + p1.h;
+        }
+        if (!(p0 instanceof v17_Sealed$Triangle)) return "unknown";
+        v17_Sealed$Triangle p1 = ((v17_Sealed$Triangle) p0);
+        return "tri " + p1.base + "x" + p1.height;
+    }
+    public double area(v17_Sealed$Shape p0) {
+        if ((p0 instanceof v17_Sealed$Circle)) {
+            v17_Sealed$Circle p1 = ((v17_Sealed$Circle) p0);
+            return (p1.r * (p1.r * 3.141592653589793));
+        }
+        if ((p0 instanceof v17_Sealed$Rectangle)) {
+            v17_Sealed$Rectangle p1 = ((v17_Sealed$Rectangle) p0);
+            return (p1.h * p1.w);
+        }
+        if (!(p0 instanceof v17_Sealed$Triangle)) return 0.0;
+        v17_Sealed$Triangle p1 = ((v17_Sealed$Triangle) p0);
+        return (p1.height * (p1.base * 0.5));
+    }
+}
