@@ -158,6 +158,20 @@ extension on CodePrinter {
   /// 仅当 expr 看起来是布尔表达式（方法调用、boolean 变量）时应用。
   String _simplifyBoolCond(String cond, [Set<String>? booleanParams]) {
     final trimmed = cond.trim();
+    // (a <=> b) > 0 → a > b  (dcmpg/dcmpl + ifgt)
+    // (a <=> b) < 0 → a < b  (dcmpg/dcmpl + iflt)
+    // (a <=> b) >= 0 → a >= b
+    // (a <=> b) <= 0 → a <= b
+    // (a <=> b) == 0 → a == b
+    // (a <=> b) != 0 → a != b
+    final cmpRe = RegExp(r'^\((.+) <=> (.+)\) (>|<|>=|<=|==|!=) 0$');
+    final cmpM = cmpRe.firstMatch(trimmed);
+    if (cmpM != null) {
+      final a = cmpM.group(1)!.trim();
+      final b = cmpM.group(2)!.trim();
+      final op = cmpM.group(3)!;
+      return '$a $op $b';
+    }
     // expr == 0 → !expr
     final eq0 = RegExp(r'^(.+) == 0$').firstMatch(trimmed);
     if (eq0 != null) {

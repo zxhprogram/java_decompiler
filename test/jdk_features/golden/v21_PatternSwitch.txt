@@ -5,72 +5,23 @@ public class v21_PatternSwitch {
     public v21_PatternSwitch() {
     }
     public String describe(Object p0) {
-        Object p1 = p0;
-        int p2 = 0;
-      label_4:
-        switch (invokedynamic typeSwitch(p1, p2)) {
-            case -1: goto label_181;
-            case 0: goto label_48;
-            case 1: goto label_112;
-            case 2: goto label_146;
-            case 3: goto label_157;
-            case 4: goto label_186;
-            default: goto label_202;
-        }
-      label_48:
-        v21_PatternSwitch$Point p3 = ((v21_PatternSwitch$Point) p1);
-        int p6 = p3.x();
-        int p7 = p6;
-
-        int p4 = p6;
-        p6 = p3.y();
-        p7 = p6;
-
-        int p5 = p6;
-        goto label_100;
-
-        p2 = 1;
-        goto label_4;
-      label_100:
-        return "point " + p4 + "," + p5;
-      label_112:
-        v21_PatternSwitch$Circle p6 = ((v21_PatternSwitch$Circle) p1);
-        if ((p6.r() <=> 0.0) > 0) return "circle r=" + p6.r();
-        p2 = 2;
-        goto label_4;
-      label_146:
-        v21_PatternSwitch$Circle p7 = ((v21_PatternSwitch$Circle) p1);
-        return "circle";
-      label_157:
-        v21_PatternSwitch$Rect p8 = ((v21_PatternSwitch$Rect) p1);
-        return "rect " + p8.w() + "x" + p8.h();
-      label_181:
-        return "null";
-      label_186:
-        Integer p9 = ((Integer) p1);
-        return "int " + p9;
-      label_202:
-        return "other";
+        return switch (p0) {
+            case v21_PatternSwitch$Point(int x, int y) -> "point " + x + "," + y;
+            case v21_PatternSwitch$Circle p6 when p6.r() > 0.0 -> "circle r=" + p6.r();
+            case v21_PatternSwitch$Circle p7 -> "circle";
+            case v21_PatternSwitch$Rect(double w, double h) -> "rect " + w + "x" + h;
+            case null -> "null";
+            case Integer p9 -> "int " + p9;
+            default -> "other";
+        };
 
     }
     public double area(v21_PatternSwitch$Shape p0) {
 
-        v21_PatternSwitch$Shape p1 = p0;
-        int p2 = 0;
-        switch (invokedynamic typeSwitch(p1, p2)) {
-            case 0: goto label_54;
-            case 1: goto label_78;
-            default: goto label_44;
-        }
-      label_44:
-        throw new MatchException(null, null);
-      label_54:
-        v21_PatternSwitch$Circle p3 = ((v21_PatternSwitch$Circle) p1);
-        return (p3.r() * (p3.r() * 3.141592653589793));
-      label_78:
-        v21_PatternSwitch$Rect p4 = ((v21_PatternSwitch$Rect) p1);
-
-        return (p4.h() * p4.w());
+        return switch (p0) {
+            case v21_PatternSwitch$Circle(double r) -> (r * (r * 3.141592653589793));
+            case v21_PatternSwitch$Rect(double w, double h) -> (h * w);
+        };
     }
     public String firstLast(SequencedCollection<String> p0) {
         return ((String) p0.getFirst()) + "..." + ((String) p0.getLast());

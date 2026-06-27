@@ -203,39 +203,74 @@ extension on CodePrinter {
       return source;
     }
 
-    // case 块在源码中必须按 case 顺序单调递增；当 switch 表的 case 值顺序
-    // 与源码中 label 出现顺序不一致时（null case、record 模式、guard 等），
-    // 会出现 end < start 导致 sublist 越界。此时放弃结构化，原样返回。
-    for (var ci = 1; ci < blockStarts.length; ci++) {
-      if (blockStarts[ci] <= blockStarts[ci - 1]) return source;
-    }
-    if (defaultStartLine != null &&
-        blockStarts.isNotEmpty &&
-        defaultStartLine <= blockStarts.last) {
-      return source;
+    // 按 case 块在源码中出现的顺序（blockStarts）重排 cases，
+    // javac 生成的 switch 表 case 值顺序可能与源码中 label 顺序不一致
+    // （null case、record 模式、guard 等场景），需要按位置排序后再处理。
+    final order = List.generate(cases.length, (i) => i)
+      ..sort((a, b) => blockStarts[a].compareTo(blockStarts[b]));
+    final sortedCases = [for (final i in order) cases[i]];
+    final sortedBlockStarts = [for (final i in order) blockStarts[i]];
+
+    // default 块位置校验：
+    // - 若 default 在所有 case 块之后：正常处理（用户提供的 default）
+    // - 若 default 在所有 case 块之前：通常是编译器为 sealed/exhaustive switch
+    //   生成的 MatchException 异常路径，可安全跳过（不输出 default case）
+    // - 若 default 在中间：结构复杂，放弃
+    bool skipDefault = false;
+    if (defaultStartLine != null && sortedBlockStarts.isNotEmpty) {
+      if (defaultStartLine <= sortedBlockStarts.first) {
+        // default 在所有 case 之前 - 检查是否为 MatchException 异常路径
+        // default 块到第一个 case 块之间
+        final defaultBlock = lines.sublist(
+          defaultStartLine,
+          sortedBlockStarts.first,
+        );
+        final isMatchException = defaultBlock.any((l) =>
+            l.contains('throw new MatchException') ||
+            l.contains('throw new java.lang.MatchException'));
+        if (isMatchException) {
+          skipDefault = true;
+          // 在 default 在前的情况下，exceptionStartLine 指向的是第一个 case label
+          // 而非真正的异常处理块，需要清除
+          exceptionStartLine = null;
+        } else {
+          return source;
+        }
+      } else if (defaultStartLine <= sortedBlockStarts.last) {
+        return source;
+      }
     }
 
     // 5. 逐个处理块，生成 case 子句
     final caseLines = <({bool isExpr, String body})>[];
-    for (var ci = 0; ci < cases.length; ci++) {
-      final start = blockStarts[ci];
-      final end = (ci + 1 < blockStarts.length)
-          ? blockStarts[ci + 1]
-          : (defaultStartLine ?? lines.length);
+    for (var ci = 0; ci < sortedCases.length; ci++) {
+      final start = sortedBlockStarts[ci];
+      final int end;
+      if (ci + 1 < sortedBlockStarts.length) {
+        end = sortedBlockStarts[ci + 1];
+      } else if (skipDefault) {
+        // default 在前且被跳过时，最后一个 case 块延伸到文件末尾
+        // 或下一个非 case label
+        end = lines.length;
+      } else {
+        end = defaultStartLine ?? lines.length;
+      }
       if (end <= start) return source;
       final block = lines.sublist(start, end);
       final caseLine = _patternCaseFromBlock(
-        cases[ci].value,
+        sortedCases[ci].value,
         block,
         sel,
         st,
         swLabel,
       );
-      if (caseLine != null) caseLines.add(caseLine);
+      // 若任一 case 块解析失败，放弃结构化（避免生成不完整的 switch）
+      if (caseLine == null) return source;
+      caseLines.add(caseLine);
     }
 
     // default 块
-    if (defaultStartLine != null) {
+    if (defaultStartLine != null && !skipDefault) {
       final end = exceptionStartLine ?? lines.length;
       if (end <= defaultStartLine) return source;
       final block = lines.sublist(defaultStartLine, end);
@@ -808,6 +843,14 @@ extension on CodePrinter {
   }) {
     if (block.isEmpty) return null;
 
+    // 检测复杂控制流：含有 instanceof 或 if-else 块的 case 无法安全结构化
+    // （嵌套 record 模式等场景），直接返回 null 让外层放弃结构化。
+    final hasComplexFlow = block.any((l) =>
+        l.contains('instanceof') ||
+        (l.contains('if (') && l.contains(') {')) ||
+        l.contains('} else {'));
+    if (hasComplexFlow) return null;
+
     // 找到结果表达式：块中最后一个 `return expr;` 或 `throw expr;`
     String? resultExpr;
     for (var i = block.length - 1; i >= 0; i--) {
@@ -815,6 +858,22 @@ extension on CodePrinter {
       if (m != null) {
         resultExpr = m.group(1) == 'throw' ? 'throw ${m.group(2)}' : m.group(2);
         break;
+      }
+    }
+
+    // 处理 guard 直接返回型：`if (cond) return expr;`
+    // 这种情况下 resultExpr 为 null（return 在 if 内），需要单独提取
+    if (resultExpr == null) {
+      final guardReturnRe = RegExp(r'^ *if \((.+)\) (return .+;|throw .+;)$');
+      for (var i = 0; i < block.length; i++) {
+        final m = guardReturnRe.firstMatch(block[i]);
+        if (m != null) {
+          final ret = m.group(2)!;
+          resultExpr = ret.startsWith('throw')
+              ? 'throw ${ret.substring(6)}'
+              : ret.substring(7, ret.length - 1);
+          break;
+        }
       }
     }
 
@@ -891,7 +950,11 @@ extension on CodePrinter {
 
     // 探测 guard：
     // 1) 失败重试型：if (cond) { state = N; goto switch; } ... return expr;
+    //    guard = !cond（条件不满足时重试下一个 case）
     // 2) 成功返回型：if (cond) goto label_true;  label_true: return expr;
+    //    guard = cond
+    // 3) 直接返回型：if (cond) return expr; state = N; goto switch;
+    //    guard = cond（条件满足时返回，否则重试下一个 case）
     String? guard;
     final retryIfRe = RegExp(r'^ *if \((.+)\) \{$');
     for (var i = castLineIdx + 1;
@@ -917,6 +980,25 @@ extension on CodePrinter {
       }
     }
 
+    // 3) 直接返回型：if (cond) return expr; ... state = N; goto switch;
+    //    模式：cast 行后紧跟 `if (cond) return expr;`，且块中存在 `goto switchLabel;`
+    if (guard == null && switchLabel != null) {
+      final directReturnIfRe =
+          RegExp(r'^ *if \((.+)\) (return .+;|throw .+;)$');
+      // 检查块中是否存在 `goto switchLabel;`（说明此 case 失败时会重试）
+      final hasRetry = block.any((l) => l.contains('goto $switchLabel;'));
+      if (hasRetry) {
+        for (var i = castLineIdx + 1; i < block.length; i++) {
+          final m = directReturnIfRe.firstMatch(block[i]);
+          if (m == null) continue;
+          final cond = m.group(1)!;
+          if (_isTrivialCondition(cond)) continue;
+          guard = _simplifyDoubleNegation(_replaceAliasNames(cond, aliasMap));
+          break;
+        }
+      }
+    }
+
     final trueGuardRe = RegExp(r'^ *if \((.+)\) goto (label_\d+);$');
     for (var i = castLineIdx + 1; i < block.length && guard == null; i++) {
       final m = trueGuardRe.firstMatch(block[i]);
@@ -933,12 +1015,156 @@ extension on CodePrinter {
       if (guard != null) break;
     }
 
+    // 简化 guard 中的比较运算符（如 `(a <=> b) > 0` → `a > b`）
+    if (guard != null) {
+      guard = _simplifyGuardComparison(guard!);
+    }
+
     final guardPart = guard != null ? ' when $guard' : '';
     final simpleType = _simplifyTypeName(patternType);
+
+    // 尝试构造 record 模式：若 resultExpr 中只引用了 patternVar 的访问器调用
+    // （如 p3.x()、p3.y()），且该类型是 record，则生成 `Type(x, y)` 形式。
+    final recordPattern = _tryBuildRecordPattern(
+      patternType!,
+      patternVar!,
+      resultExpr,
+      aliasMap,
+    );
+    if (recordPattern != null && guard == null) {
+      // 将 resultExpr 中的 patternVar.accessor() 替换为组件名
+      var replacedExpr = resultExpr;
+      final components = _lookupRecordComponents(patternType!)!;
+      for (final comp in components) {
+        replacedExpr = replacedExpr.replaceAll(
+          '$patternVar.${comp.name}()',
+          comp.name,
+        );
+      }
+      return (
+        isExpr: true,
+        body: 'case $simpleType$recordPattern -> $replacedExpr;',
+      );
+    }
+
     return (
       isExpr: true,
       body: 'case $simpleType $patternVar$guardPart -> $resultExpr;',
     );
+  }
+
+  /// 尝试构造 record 模式 `Type(int x, int y)`。
+  /// 仅当 patternType 是 record 且其所有组件都在 resultExpr 中通过
+  /// `patternVar.accessor()` 形式被引用时才返回 `(int x, int y)`，否则返回 null。
+  String? _tryBuildRecordPattern(
+    String patternType,
+    String patternVar,
+    String resultExpr,
+    Map<String, String> aliasMap,
+  ) {
+    // 查找该 record 类型的组件（名+类型）列表
+    final components = _lookupRecordComponents(patternType);
+    if (components == null || components.isEmpty) return null;
+
+    // 检查 resultExpr 中是否引用了 patternVar 的所有组件访问器
+    final usedAccessors = <String>{};
+    for (final comp in components) {
+      final accessorCall = '$patternVar.${comp.name}()';
+      if (resultExpr.contains(accessorCall)) {
+        usedAccessors.add(comp.name);
+      }
+    }
+    // 必须使用所有组件才能生成 record 模式
+    if (usedAccessors.length != components.length) return null;
+
+    // 生成 `(Type1 comp1, Type2 comp2)` 形式
+    final parts = components.map((c) => '${c.type} ${c.name}').join(', ');
+    return '($parts)';
+  }
+
+  /// 查找 record 类型的组件（名+类型）列表。
+  /// 通过常量池中该类型的方法引用推断无参 accessor 方法。
+  List<({String name, String type})>? _lookupRecordComponents(
+      String patternType) {
+    // 简单实现：仅对已知的 record 类型（通过 _cf 的 RecordAttribute 或
+    // 内部类查找）返回组件。这里通过反射已加载的 ClassFile 获取。
+    // 由于反编译上下文中可能没有目标类的 ClassFile，我们通过常量池中
+    // 出现的 record 组件方法名启发式推断。
+    try {
+      final internalName = patternType.replaceAll('.', '/');
+      // 在常量池中查找该类型的 RecordAttribute 或组件方法
+      // 简化：通过方法引用推断组件（x(), y(), r() 等无参方法）
+      final components = <({String name, String type})>[];
+      for (var i = 1; i < _pool.length; i++) {
+        final e = _pool.get(i);
+        if (e is CpMethodref || e is CpInterfaceMethodref) {
+          final classIndex = e is CpMethodref
+              ? e.classIndex
+              : (e as CpInterfaceMethodref).classIndex;
+          final natIndex = e is CpMethodref
+              ? e.nameAndTypeIndex
+              : (e as CpInterfaceMethodref).nameAndTypeIndex;
+          final nt = _pool.getNameAndType(natIndex);
+          final cls = _pool.getClassName(classIndex);
+          if (cls == internalName) {
+            final name = _pool.getString(nt.nameIndex);
+            final desc = _pool.getString(nt.descriptorIndex);
+            // 无参方法且返回值非 void，可能是组件访问器
+            if (desc.startsWith('()') && !desc.endsWith(')V')) {
+              // 排除 Object 方法
+              if (name != 'toString' &&
+                  name != 'hashCode' &&
+                  name != 'getClass' &&
+                  !name.startsWith('get')) {
+                // 从描述符提取返回类型（如 ()I -> int, ()D -> double）
+                final retTypeDesc = desc.substring(2);
+                final retType =
+                    DescriptorParser.parseFieldDescriptor(retTypeDesc);
+                components.add((name: name, type: retType));
+              }
+            }
+          }
+        }
+      }
+      return components.isEmpty ? null : components;
+    } catch (_) {
+      return null;
+    }
+  }
+
+  /// 简化 guard 中的比较运算符：
+  /// `(a <=> b) > 0` → `a > b`，`(a <=> b) < 0` → `a < b` 等。
+  /// 同时去掉冗余的外层括号。
+  String _simplifyGuardComparison(String guard) {
+    var result = guard.trim();
+    // `(a <=> b) OP 0` → `a OP b`
+    final cmpRe = RegExp(r'^\((.+) <=> (.+)\) (>|<|>=|<=|==|!=) 0$');
+    final m = cmpRe.firstMatch(result);
+    if (m != null) {
+      final a = m.group(1)!.trim();
+      final b = m.group(2)!.trim();
+      final op = m.group(3)!;
+      result = '$a $op $b';
+    }
+    // 去掉冗余外层括号（如 `(p6.r() > 0.0)` → `p6.r() > 0.0`）
+    if (result.startsWith('(') && result.endsWith(')')) {
+      var depth = 0;
+      var canStrip = true;
+      for (var i = 0; i < result.length; i++) {
+        if (result[i] == '(') depth++;
+        if (result[i] == ')') {
+          depth--;
+          if (depth == 0 && i != result.length - 1) {
+            canStrip = false;
+            break;
+          }
+        }
+      }
+      if (canStrip) {
+        result = result.substring(1, result.length - 1);
+      }
+    }
+    return result;
   }
 
   /// 处理不含 `return/throw` 的 case 块（语句风格），收集有效语句生成 case 体。
