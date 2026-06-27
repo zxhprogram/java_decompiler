@@ -1,6 +1,6 @@
 package com.example;
 
-final enum Season {
+enum Season {
     public static final Season SPRING = new Season("SPRING", 0, "warm");
     public static final Season SUMMER = new Season("SUMMER", 1, "hot");
     public static final Season AUTUMN = new Season("AUTUMN", 2, "cool");

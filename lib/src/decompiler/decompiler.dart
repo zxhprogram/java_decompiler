@@ -44,8 +44,12 @@ class Decompiler {
     }
     sb.writeln(' {');
 
+    final isEnum = (_cf.accessFlags & AccessFlags.ACC_ENUM) != 0;
     if (recordAttr != null) {
       _writeRecordBody(sb, className, recordAttr);
+    } else if (isEnum && _isSimpleEnum()) {
+      _prepareClinit();
+      _writeEnumBody(sb, className);
     } else {
       _prepareClinit();
       for (final field in _cf.fields) {
@@ -232,10 +236,12 @@ class Decompiler {
     final decl = <String>[];
     if (mods.contains('public')) decl.add('public');
     if (permitted != null) decl.add('sealed');
-    if (mods.contains('final')) decl.add('final');
+    // enum 隐式 final，不需要写出
+    if (mods.contains('final') && kind != 'enum') decl.add('final');
     if (mods.contains('abstract') &&
         kind != 'interface' &&
-        kind != '@interface') {
+        kind != '@interface' &&
+        kind != 'enum') {
       decl.add('abstract');
     }
     decl.add(kind == '@interface' ? '@interface' : kind);
@@ -379,6 +385,77 @@ class Decompiler {
     }
 
     return false;
+  }
+
+  /// 判断是否为"简单枚举"：每个非 `$VALUES` 字段都是枚举常量，
+  /// 且每个非合成方法都是枚举自动生成的方法（values/valueOf/$values/<init>）。
+  /// 简单枚举才走 `_writeEnumBody` 还原为 `RED, GREEN, BLUE;` 形式；
+  /// 带构造器参数、自定义方法或字段的复杂枚举回退到普通类输出。
+  bool _isSimpleEnum() {
+    for (final f in _cf.fields) {
+      final isEnumConst = (f.accessFlags & AccessFlags.ACC_ENUM) != 0;
+      final name = _pool.getString(f.nameIndex);
+      if (!isEnumConst && name != r'$VALUES') return false;
+    }
+    for (final m in _cf.methods) {
+      final name = _pool.getString(m.nameIndex);
+      if (name == '<clinit>') continue;
+      if (name == 'values' || name == 'valueOf' || name == r'$values') {
+        continue;
+      }
+      if (name == '<init>') {
+        // 仅允许默认无参构造器（synthetic 占位也算）
+        final desc = _pool.getString(m.descriptorIndex);
+        final (params, _) = DescriptorParser.parseMethodDescriptor(desc);
+        if (params.length != 2) return false;
+        continue;
+      }
+      return false;
+    }
+    return true;
+  }
+
+  void _writeEnumBody(StringBuffer sb, String className) {
+    // 枚举常量：按字段顺序输出，最后一个加 `;` 其余加 `,`
+    final consts = <String>[];
+    for (final f in _cf.fields) {
+      if ((f.accessFlags & AccessFlags.ACC_ENUM) == 0) continue;
+      final name = _pool.getString(f.nameIndex);
+      // 从 _staticFinalInitializers 中拿到 `new Color("RED", 0)` 形式
+      // 提取其中的字符串字面量作为常量名（与字段名应一致）
+      consts.add(name);
+    }
+    if (consts.isNotEmpty) {
+      for (var i = 0; i < consts.length; i++) {
+        final sep = i == consts.length - 1 ? ';' : ',';
+        sb.writeln('    ${consts[i]}$sep');
+      }
+    }
+
+    // 跳过 $VALUES 字段、values()/valueOf()/$values() 方法、默认 <init>、<clinit>
+    final remaining = <MethodInfo>[];
+    for (final m in _cf.methods) {
+      final name = _pool.getString(m.nameIndex);
+      if (name == '<clinit>') continue;
+      if (name == 'values' || name == 'valueOf' || name == r'$values') continue;
+      if (name == '<init>') {
+        final desc = _pool.getString(m.descriptorIndex);
+        final (params, _) = DescriptorParser.parseMethodDescriptor(desc);
+        // 枚举默认构造器：(String, int) -> void，由 javac 自动生成
+        if (params.length == 2 &&
+            (params[0] == 'String' || params[0] == 'java.lang.String') &&
+            params[1] == 'int') {
+          continue;
+        }
+      }
+      remaining.add(m);
+    }
+    if (remaining.isNotEmpty) {
+      sb.writeln();
+      for (final m in remaining) {
+        _writeMethod(sb, m, className);
+      }
+    }
   }
 
   void _prepareClinit() {
