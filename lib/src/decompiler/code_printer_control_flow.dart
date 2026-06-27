@@ -3,8 +3,6 @@ part of 'code_printer.dart';
 /// 控制流结构化：if-else / while / for / for-each / do-while /
 /// try-catch 结构还原。
 extension on CodePrinter {
-
-
   /// 把 `if (cond) goto label_X; ... label_X: <terminator>;` 模式提升为
   /// `if (cond) <terminator>;`，从而消除冗余标号、简化控制流。
   ///
@@ -70,10 +68,12 @@ extension on CodePrinter {
         // 否则 label 会被 fall-through 到达，提升会丢失该路径。
         // label 前一行是 j-1（如果 j > 0）。
         if (j > 0) {
-          final prevLine = lines[j - 1].trim();
+          lines[j - 1].trim();
           // 跳过空行
           var pl = j - 1;
-          while (pl >= 0 && lines[pl].trim().isEmpty) pl--;
+          while (pl >= 0 && lines[pl].trim().isEmpty) {
+            pl--;
+          }
           if (pl >= 0) {
             final plTrimmed = lines[pl].trim();
             // 终结语句：return, throw, goto, } 结尾, if (...) goto
@@ -754,7 +754,9 @@ extension on CodePrinter {
 
         // label 前面应依次为 idx=0, len=arr.length, arr=arrayExpr
         var idx0Line = i - 1;
-        while (idx0Line >= 0 && lines[idx0Line].trim().isEmpty) idx0Line--;
+        while (idx0Line >= 0 && lines[idx0Line].trim().isEmpty) {
+          idx0Line--;
+        }
         if (idx0Line < 0) continue;
         final idx0Match = initIdxRe.firstMatch(lines[idx0Line]);
         if (idx0Match == null || idx0Match.group(1) != idxVar) continue;
@@ -914,7 +916,7 @@ extension on CodePrinter {
           final newLines = <String>[
             '${whileIndent}while ($negCond) {',
             ...indentedBody,
-            '${whileIndent}}',
+            '$whileIndent}',
           ];
           // 找到 exit label 位置，如果它在 gotoEnd 后紧邻且未被其他地方引用，
           // 一并移除（它通常是循环结束后的下一条语句标号）
@@ -1029,7 +1031,7 @@ extension on CodePrinter {
         final indentedBody = _reindentBlock(bodyLines, '            ');
 
         final newLines = <String>[
-          '        for ($initDecl; $cond; ${idxVar}++) {',
+          '        for ($initDecl; $cond; $idxVar++) {',
           ...indentedBody,
           '        }',
         ];
@@ -1078,7 +1080,6 @@ extension on CodePrinter {
         // 在 j+1 到 endLabelLine 之间找 `idxVar += 1; goto startLabel;` 模式
         // 通常是: label_INC: idxVar += 1; goto startLabel;
         int? incLabelLine;
-        int? incLine;
         int? gotoLine;
         for (var k = j + 1; k < endLabelLine - 2; k++) {
           final lm2 = labelRe.firstMatch(lines[k]);
@@ -1091,7 +1092,6 @@ extension on CodePrinter {
               gotoMatch != null &&
               gotoMatch.group(1) == startLabel) {
             incLabelLine = k;
-            incLine = k + 1;
             gotoLine = k + 2;
             break;
           }
@@ -1123,7 +1123,7 @@ extension on CodePrinter {
         var endLabelRefs = 0;
         for (var n = 0; n < lines.length; n++) {
           if (n == j) continue;
-          if (n > j && n < incLabelLine!) continue; // 循环体内的 break
+          if (n > j && n < incLabelLine) continue; // 循环体内的 break
           if (n >= incLabelLine && n <= gotoLine!) continue; // inc 部分
           if (lines[n].contains('goto $endLabel;')) endLabelRefs++;
         }
@@ -1140,7 +1140,7 @@ extension on CodePrinter {
         final cond = op == '>=' ? '$idxVar < $bound' : '$idxVar >= $bound';
 
         final newLines = <String>[
-          '        for ($initDecl; $cond; ${idxVar}++) {',
+          '        for ($initDecl; $cond; $idxVar++) {',
           ...indentedBody,
           '        }',
         ];
@@ -1304,8 +1304,6 @@ extension on CodePrinter {
     return lines.join('\n');
   }
 
-
-
   /// 重新缩进代码块，保留相对缩进。
   /// [targetIndent] 是第一行（最外层）应该使用的缩进。
   /// 其他行根据与第一行的相对缩进差进行调整。
@@ -1330,5 +1328,4 @@ extension on CodePrinter {
       return '$newIndent${l.trimLeft()}';
     }).toList();
   }
-
 }

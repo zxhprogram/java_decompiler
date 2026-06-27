@@ -3,8 +3,6 @@ part of 'code_printer.dart';
 /// 后处理简化 pass：布尔返回、短路展平、条件简化、装箱拆箱、
 /// 标签清理、栈下溢移除等。
 extension on CodePrinter {
-
-
   /// 对返回类型为 boolean 的方法，把 `return 0;`/`return 1;` 转换为
   /// `return false;`/`return true;`，让源码更贴近原始 Java 写法。
   String _simplifyBooleanReturns(String source) {
@@ -82,7 +80,7 @@ extension on CodePrinter {
         final newLines = <String>[
           '${outerIndent}if ($a) $outerReturn',
           '${outerIndent}if ($b) $outerReturn',
-          '${outerIndent}$innerReturn',
+          '$outerIndent$innerReturn',
         ];
         lines.replaceRange(i, i + 4, newLines);
         changed = true;
@@ -189,8 +187,9 @@ extension on CodePrinter {
     // 已经是 !expr 形式
     if (expr.startsWith('!')) return true;
     // 已知 boolean 参数（通过方法签名识别）
-    if (booleanParams != null && booleanParams.contains(expr.trim()))
+    if (booleanParams != null && booleanParams.contains(expr.trim())) {
       return true;
+    }
     return false;
   }
 
@@ -237,7 +236,6 @@ extension on CodePrinter {
   ///    pattern switch 生成的 MatchException 包装，移除后 _structureTryCatch
   ///    不会再把整个方法体包进 try-catch
   /// 3. `Objects.requireNonNull(var);` - 编译器生成的 null 检查
-
 
   /// 简化 `if (!cond) { } else { body }` 为 `if (cond) { body }`
   /// 以及 `if (cond) { } else { body }` 为 `if (!cond) { body }`
@@ -301,7 +299,7 @@ extension on CodePrinter {
         final newLines = <String>[
           '${indent}if ($newCond) {',
           ...elseBody,
-          '${indent}}',
+          '$indent}',
         ];
         lines.replaceRange(i, elseClose + 1, newLines);
         changed = true;
@@ -321,7 +319,6 @@ extension on CodePrinter {
     final gotoRe = RegExp(r'^(\s*)goto (label_\d+);$');
     final labelRe = RegExp(r'^(\s*)(label_\d+):$');
     final loopStartRe = RegExp(r'^\s*(for|while|do)\b');
-    final loopEndRe = RegExp(r'^\s*\}\s*$');
 
     bool changed;
     do {
@@ -460,8 +457,6 @@ extension on CodePrinter {
         .where((line) => line.trim() != 'return /*stack underflow*/;')
         .join('\n');
   }
-
-
 
   String _simplifyDoubleNegation(String cond) {
     var result = cond.trim();

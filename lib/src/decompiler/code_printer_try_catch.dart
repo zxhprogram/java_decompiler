@@ -2,8 +2,6 @@ part of 'code_printer.dart';
 
 /// try-catch-finally / try-with-resources 残留清理。
 extension on CodePrinter {
-
-
   /// 清理 try/catch/finally 反编译后的残留：
   /// 1. catch 块末尾的 finally 内联副本（goto 前的 finally body）
   /// 2. catch 块外的 finally handler 残留（`Throwable pN = /*exception*/; ... throw pN;`）
@@ -170,7 +168,7 @@ extension on CodePrinter {
       for (var k = i + 1; k < lines.length; k++) {
         final trimmed = lines[k].trim();
         if (trimmed.isEmpty) continue; // 跳过空行
-        if (trimmed == label + ':') {
+        if (trimmed == '$label:') {
           labelNearby = true;
         }
         break; // 遇到第一个非空行就停止
@@ -183,7 +181,7 @@ extension on CodePrinter {
       var labelExists = false;
       for (var k = 0; k < lines.length; k++) {
         if (k == i) continue;
-        if (lines[k].trim() == label + ':') {
+        if (lines[k].trim() == '$label:') {
           labelExists = true;
           break;
         }

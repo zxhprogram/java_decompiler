@@ -83,24 +83,24 @@ abstract class StackMapFrame {
 }
 
 class SameFrame extends StackMapFrame {
-  SameFrame(int frameType) : super(frameType);
+  SameFrame(super.frameType);
 }
 
 class SameLocals1StackItemFrame extends StackMapFrame {
   final VerificationTypeInfo stackItem;
-  SameLocals1StackItemFrame(int frameType, this.stackItem) : super(frameType);
+  SameLocals1StackItemFrame(super.frameType, this.stackItem);
 }
 
 class SameLocals1StackItemFrameExtended extends StackMapFrame {
   final int offsetDelta;
   final VerificationTypeInfo stackItem;
   SameLocals1StackItemFrameExtended(this.offsetDelta, this.stackItem)
-    : super(247);
+      : super(247);
 }
 
 class ChopFrame extends StackMapFrame {
   final int offsetDelta;
-  ChopFrame(int frameType, this.offsetDelta) : super(frameType);
+  ChopFrame(super.frameType, this.offsetDelta);
 }
 
 class SameFrameExtended extends StackMapFrame {
@@ -111,7 +111,7 @@ class SameFrameExtended extends StackMapFrame {
 class AppendFrame extends StackMapFrame {
   final int offsetDelta;
   final List<VerificationTypeInfo> locals;
-  AppendFrame(int frameType, this.offsetDelta, this.locals) : super(frameType);
+  AppendFrame(super.frameType, this.offsetDelta, this.locals);
 }
 
 class FullFrame extends StackMapFrame {
@@ -153,7 +153,7 @@ class EnclosingMethodAttribute extends AttributeInfo {
   final int classIndex;
   final int methodIndex;
   EnclosingMethodAttribute(this.classIndex, this.methodIndex)
-    : super('EnclosingMethod');
+      : super('EnclosingMethod');
 }
 
 class SyntheticAttribute extends AttributeInfo {
@@ -173,7 +173,7 @@ class SourceFileAttribute extends AttributeInfo {
 class SourceDebugExtensionAttribute extends AttributeInfo {
   final String debugExtension;
   SourceDebugExtensionAttribute(this.debugExtension)
-    : super('SourceDebugExtension');
+      : super('SourceDebugExtension');
 }
 
 class LineNumberEntry {
@@ -205,7 +205,7 @@ class LocalVariableEntry {
 class LocalVariableTableAttribute extends AttributeInfo {
   final List<LocalVariableEntry> localVariableTable;
   LocalVariableTableAttribute(this.localVariableTable)
-    : super('LocalVariableTable');
+      : super('LocalVariableTable');
 }
 
 class LocalVariableTypeEntry {
@@ -226,7 +226,7 @@ class LocalVariableTypeEntry {
 class LocalVariableTypeTableAttribute extends AttributeInfo {
   final List<LocalVariableTypeEntry> localVariableTypeTable;
   LocalVariableTypeTableAttribute(this.localVariableTypeTable)
-    : super('LocalVariableTypeTable');
+      : super('LocalVariableTypeTable');
 }
 
 class DeprecatedAttribute extends AttributeInfo {
@@ -253,14 +253,14 @@ abstract class ElementValue {
 
 class ConstElementValue extends ElementValue {
   final int constValueIndex;
-  ConstElementValue(int tag, this.constValueIndex) : super(tag);
+  ConstElementValue(super.tag, this.constValueIndex);
 }
 
 class EnumElementValue extends ElementValue {
   final int typeNameIndex;
   final int constNameIndex;
   EnumElementValue(this.typeNameIndex, this.constNameIndex)
-    : super('e'.codeUnitAt(0));
+      : super('e'.codeUnitAt(0));
 }
 
 class ClassElementValue extends ElementValue {
@@ -281,25 +281,25 @@ class ArrayElementValue extends ElementValue {
 class RuntimeVisibleAnnotationsAttribute extends AttributeInfo {
   final List<Annotation> annotations;
   RuntimeVisibleAnnotationsAttribute(this.annotations)
-    : super('RuntimeVisibleAnnotations');
+      : super('RuntimeVisibleAnnotations');
 }
 
 class RuntimeInvisibleAnnotationsAttribute extends AttributeInfo {
   final List<Annotation> annotations;
   RuntimeInvisibleAnnotationsAttribute(this.annotations)
-    : super('RuntimeInvisibleAnnotations');
+      : super('RuntimeInvisibleAnnotations');
 }
 
 class RuntimeVisibleParameterAnnotationsAttribute extends AttributeInfo {
   final List<List<Annotation>> parameterAnnotations;
   RuntimeVisibleParameterAnnotationsAttribute(this.parameterAnnotations)
-    : super('RuntimeVisibleParameterAnnotations');
+      : super('RuntimeVisibleParameterAnnotations');
 }
 
 class RuntimeInvisibleParameterAnnotationsAttribute extends AttributeInfo {
   final List<List<Annotation>> parameterAnnotations;
   RuntimeInvisibleParameterAnnotationsAttribute(this.parameterAnnotations)
-    : super('RuntimeInvisibleParameterAnnotations');
+      : super('RuntimeInvisibleParameterAnnotations');
 }
 
 class AnnotationDefaultAttribute extends AttributeInfo {
@@ -424,5 +424,5 @@ class PermittedSubclassesAttribute extends AttributeInfo {
 
 class UnknownAttribute extends AttributeInfo {
   final Uint8List data;
-  UnknownAttribute(String name, this.data) : super(name);
+  UnknownAttribute(super.name, this.data);
 }

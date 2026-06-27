@@ -2,8 +2,6 @@ part of 'code_printer.dart';
 
 /// Lambda 表达式与方法引用解析。
 extension on CodePrinter {
-
-
   /// 解析 LambdaMetafactory.metafactory 调用，返回方法引用或 lambda 表达式字符串。
   /// 返回 null 表示无法解析。
   String? _tryParseLambda(CpInvokeDynamic id, List<String> capturedArgs) {
@@ -60,7 +58,7 @@ extension on CodePrinter {
 
     final refKind = implMhInfo.referenceKind;
     final implClsSimple = DescriptorParser.internalToSourceName(implCls);
-    final (implParams, _) = DescriptorParser.parseMethodDescriptor(implDesc);
+    final (_, _) = DescriptorParser.parseMethodDescriptor(implDesc);
 
     // 判断是 lambda 还是方法引用：
     // - 方法名形如 lambda$xxx$N 的是 lambda 表达式
@@ -118,18 +116,6 @@ extension on CodePrinter {
       return '$implClsSimple::$implName';
     }
     return null;
-  }
-
-  /// 简化类型描述符为可读形式（用于 lambda 签名）
-  String _simplifyTypeForLambda(String desc) {
-    if (desc == 'void') return 'void';
-    if (desc == 'int') return 'int';
-    if (desc == 'long') return 'long';
-    if (desc == 'boolean') return 'boolean';
-    if (desc == 'java.lang.String') return 'String';
-    if (desc == 'java.lang.Integer') return 'Integer';
-    if (desc == 'java.lang.Object') return 'Object';
-    return desc;
   }
 
   /// 反编译 lambda 方法，返回 body 表达式或语句块。

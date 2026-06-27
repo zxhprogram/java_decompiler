@@ -84,7 +84,9 @@ class DescriptorParser {
       } else if (c == '[') {
         // 跳过数组维度，基础类型占 1 槽
         i++;
-        while (descriptor[i] == '[') i++;
+        while (descriptor[i] == '[') {
+          i++;
+        }
         if (descriptor[i] == 'L') {
           i = descriptor.indexOf(';', i) + 1;
         } else {
@@ -198,8 +200,7 @@ class SignatureParser {
       _expect(';');
       return id;
     } else {
-      throw FormatException(
-          'Unexpected char "$c" at $_pos in signature: $_s');
+      throw FormatException('Unexpected char "$c" at $_pos in signature: $_s');
     }
   }
 
@@ -221,8 +222,7 @@ class SignatureParser {
         _pos++;
         break;
       } else {
-        throw FormatException(
-            'Expected "." or ";" at $_pos in signature: $_s');
+        throw FormatException('Expected "." or ";" at $_pos in signature: $_s');
       }
     }
     final sb = StringBuffer();
@@ -285,8 +285,7 @@ class SignatureParser {
 
   void _expect(String expected) {
     if (_peek() != expected) {
-      throw FormatException(
-          'Expected "$expected" at $_pos in signature: $_s');
+      throw FormatException('Expected "$expected" at $_pos in signature: $_s');
     }
     _pos++;
   }

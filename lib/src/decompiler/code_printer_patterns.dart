@@ -2,8 +2,6 @@ part of 'code_printer.dart';
 
 /// 模式匹配：instanceof record pattern 预处理与残留清理。
 extension on CodePrinter {
-
-
   /// 预处理模式匹配相关的编译器生成代码：
   /// 1. `if (1 == 0) goto label_X;` - 始终为假的条件跳转，直接移除
   /// 2. `Throwable pN = /*exception*/; throw new MatchException(...)` - 编译器为
@@ -276,9 +274,11 @@ extension on CodePrinter {
           final line = lines[k];
           for (var ci = 0; ci < line.length; ci++) {
             final c = line[ci];
-            if (c == '{')
+            if (c == '{') {
               depth++;
-            else if (c == '}') depth--;
+            } else if (c == '}') {
+              depth--;
+            }
             if (depth == 0) {
               ifCloseLine = k;
               break;
@@ -312,9 +312,11 @@ extension on CodePrinter {
             final line = lines[k];
             for (var ci = 0; ci < line.length; ci++) {
               final c = line[ci];
-              if (c == '{')
+              if (c == '{') {
                 depth++;
-              else if (c == '}') depth--;
+              } else if (c == '}') {
+                depth--;
+              }
               if (depth == 0) {
                 elseCloseLine = k;
                 break;
