@@ -230,6 +230,65 @@ extension on CodePrinter {
     return source;
   }
 
+  /// 合并 `||` 短路 throw/return 模式。
+  ///
+  /// `A || B` 编译后的字节码经 _liftIfGotoToTerminator 处理后会变成：
+  ///   if (A) throw X;
+  ///   if (B) {
+  ///   }
+  /// 第二个 if 的空体是 throw 被提升后留下的残余。
+  /// 此函数将其合并为 `if (A || B) throw X;`。
+  ///
+  /// 同理处理 return:
+  ///   if (A) return X;
+  ///   if (B) {
+  ///   }
+  /// → if (A || B) return X;
+  String _mergeOrThrow(String source) {
+    var lines = source.split('\n');
+    // 匹配 `if (A) throw X;` 或 `if (A) return X;`
+    final ifTermRe = RegExp(r'^(\s*)if \((.+)\) (throw .+;|return .+;)$');
+    // 匹配 `if (B) {`
+    final ifOpenRe = RegExp(r'^(\s*)if \((.+)\) \{$');
+    // 匹配 `}`
+    final closeRe = RegExp(r'^(\s*)\}$');
+
+    bool changed;
+    do {
+      changed = false;
+      for (var i = 0; i < lines.length - 2; i++) {
+        final m1 = ifTermRe.firstMatch(lines[i]);
+        if (m1 == null) continue;
+        final indent = m1.group(1)!;
+        final condA = m1.group(2)!;
+        final terminator = m1.group(3)!;
+
+        // 下一行: `if (B) {` 同缩进
+        final m2 = ifOpenRe.firstMatch(lines[i + 1]);
+        if (m2 == null) continue;
+        if (m2.group(1)! != indent) continue;
+        final condB = m2.group(2)!;
+
+        // 下一行: `}` 同缩进（空体）
+        final m3 = closeRe.firstMatch(lines[i + 2]);
+        if (m3 == null) continue;
+        if (m3.group(1)! != indent) continue;
+
+        // 确认 if (B) { } 之间是空的（i+1 和 i+2 之间无内容）
+        // i+1 是 `if (B) {`，i+2 是 `}`，中间无行，所以体为空。
+
+        // 合并: if (A || B) <terminator>;
+        lines.replaceRange(i, i + 3, [
+          '${indent}if ($condA || $condB) $terminator',
+        ]);
+        changed = true;
+        break;
+      }
+    } while (changed);
+
+    return lines.join('\n');
+  }
+
   /// 预处理模式匹配相关的编译器生成代码：
   /// 1. `if (1 == 0) goto label_X;` - 始终为假的条件跳转，直接移除
   /// 2. `Throwable pN = /*exception*/; throw new MatchException(...)` - 编译器为

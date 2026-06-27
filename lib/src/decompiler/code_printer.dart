@@ -110,6 +110,7 @@ class CodePrinter {
     text = _simplifyConditions(text);
     text = _flattenShortCircuitReturns(text);
     text = _simplifyBooleanReturns(text);
+    text = _mergeOrThrow(text);
     text = _restoreVariableNames(text);
     return text;
   }

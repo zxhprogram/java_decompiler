@@ -1,5 +1,3 @@
-import java.io.PrintStream;
-
 public class v1_0_Basics {
     static int staticField;
     final double constant;

@@ -1,6 +1,5 @@
 import java.util.Iterator;
 import java.util.List;
-import java.util.stream.Stream;
 
 public class v18_Simple {
     public v18_Simple() {

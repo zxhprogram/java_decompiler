@@ -349,8 +349,77 @@ class Decompiler {
       if (_isRecordGeneratedMethod(method, componentNames, componentTypes)) {
         continue;
       }
+      // 规范构造器含用户代码时，还原为紧凑构造器
+      if (_isCompactConstructor(method, componentNames, componentTypes)) {
+        _writeCompactConstructor(sb, method, className, componentNames);
+        continue;
+      }
       _writeMethod(sb, method, className);
     }
+  }
+
+  /// 判断方法是否为含用户代码的 record 规范构造器（需还原为紧凑构造器）。
+  bool _isCompactConstructor(MethodInfo method, List<String> componentNames,
+      List<String> componentTypes) {
+    final rawName = _pool.getString(method.nameIndex);
+    if (rawName != '<init>') return false;
+    final desc = _pool.getString(method.descriptorIndex);
+    final (paramTypes, _) = DescriptorParser.parseMethodDescriptor(desc);
+    if (paramTypes.length != componentTypes.length) return false;
+    if (!_listEquals(paramTypes, componentTypes)) return false;
+    // 已在 _isRecordGeneratedConstructor 中确认有用户代码
+    return !_isRecordGeneratedConstructor(method, componentNames);
+  }
+
+  /// 将含用户代码的规范构造器还原为紧凑构造器。
+  ///
+  /// 紧凑构造器格式: `public Point { <用户代码> }`
+  /// 自动生成的 super() 调用和字段赋值 (this.x = x) 被剥离。
+  void _writeCompactConstructor(StringBuffer sb, MethodInfo method,
+      String className, List<String> componentNames) {
+    final code = method.attribute<CodeAttribute>();
+    final mods = AccessFlagFormatter.methodFlags(method.accessFlags).toList();
+    _writeMemberAnnotations(sb, method);
+    sb.write('    ${mods.join(' ')}${mods.isEmpty ? '' : ' '}');
+    sb.write(_simpleName(className));
+    sb.writeln(' {');
+
+    if (code != null) {
+      final printer = CodePrinter(method, code, _cf);
+      final body = printer.printBody();
+      // 剥离自动生成的代码行
+      final cleaned = _stripGeneratedConstructorCode(body, componentNames);
+      sb.write(cleaned);
+    }
+
+    sb.writeln('    }');
+  }
+
+  /// 从构造器反编译结果中剥离编译器自动生成的代码：
+  ///   - super() 调用
+  ///   - this.<component> = <param>; 字段赋值
+  String _stripGeneratedConstructorCode(
+      String body, List<String> componentNames) {
+    final lines = body.split('\n');
+    final result = <String>[];
+    for (final line in lines) {
+      final trimmed = line.trim();
+      if (trimmed.isEmpty) continue;
+      // 跳过 super() 调用
+      if (trimmed == 'super();' || trimmed.startsWith('super(')) continue;
+      // 跳过 this.<component> = <value>; 赋值
+      bool isFieldAssignment = false;
+      for (final name in componentNames) {
+        if (trimmed.startsWith('this.$name =') && trimmed.endsWith(';')) {
+          isFieldAssignment = true;
+          break;
+        }
+      }
+      if (isFieldAssignment) continue;
+      result.add(line);
+    }
+    if (result.isEmpty) return '';
+    return '${result.join('\n')}\n';
   }
 
   bool _listEquals(List<String> a, List<String> b) {
@@ -368,10 +437,11 @@ class Decompiler {
     final (paramTypes, returnType) =
         DescriptorParser.parseMethodDescriptor(desc);
 
-    // 规范构造器
+    // 规范构造器 - 仅当无用户代码时跳过
     if (rawName == '<init>' &&
         paramTypes.length == componentTypes.length &&
-        _listEquals(paramTypes, componentTypes)) {
+        _listEquals(paramTypes, componentTypes) &&
+        _isRecordGeneratedConstructor(method, componentNames)) {
       return true;
     }
 
@@ -382,8 +452,10 @@ class Decompiler {
       return true;
     }
 
-    // Object 方法
-    if (rawName == 'toString' && paramTypes.isEmpty && returnType == 'String') {
+    // Object 方法（注意 parseMethodDescriptor 返回全限定名）
+    if (rawName == 'toString' &&
+        paramTypes.isEmpty &&
+        returnType == 'java.lang.String') {
       return true;
     }
     if (rawName == 'hashCode' && paramTypes.isEmpty && returnType == 'int') {
@@ -391,11 +463,63 @@ class Decompiler {
     }
     if (rawName == 'equals' &&
         paramTypes.length == 1 &&
-        paramTypes[0] == 'Object' &&
+        paramTypes[0] == 'java.lang.Object' &&
         returnType == 'boolean') {
       return true;
     }
 
+    return false;
+  }
+
+  /// 判断 record 规范构造器是否仅由编译器生成代码组成（无用户代码）。
+  ///
+  /// record 规范构造器的字节码模式：
+  ///   1. aload_0; invokespecial Record.<init>  (super 调用)
+  ///   2. [用户代码]                              (可选 - 紧凑构造器体)
+  ///   3. 每个组件: aload_0; iload_n; putfield   (字段赋值)
+  ///   4. return
+  ///
+  /// 若构造器只包含 1、3、4（无用户代码），则返回 true（可跳过）。
+  /// 若包含用户代码（紧凑构造器体），则返回 false（需保留为紧凑构造器）。
+  bool _isRecordGeneratedConstructor(
+      MethodInfo method, List<String> componentNames) {
+    final code = method.attribute<CodeAttribute>();
+    if (code == null) return true;
+    final ins = BytecodeDecoder(code.code).decode();
+    if (ins.isEmpty) return true;
+
+    int i = 0;
+    // 1. 跳过 super() 调用: aload_0; invokespecial
+    if (ins[i].opcode != Opcodes.aload_0) return false;
+    i++;
+    if (i >= ins.length || ins[i].opcode != Opcodes.invokespecial) return false;
+    i++;
+
+    // 2. 跳过字段赋值: aload_0; <load param>; putfield <component>
+    //    字段赋值可能不按声明顺序，但通常按顺序。
+    final assignedFields = <String>{};
+    while (i < ins.length) {
+      // 检查是否为字段赋值模式: aload_0; <load>; putfield
+      if (ins[i].opcode == Opcodes.aload_0 &&
+          i + 2 < ins.length &&
+          ins[i + 2].opcode == Opcodes.putfield) {
+        final fieldRef = _pool.getFieldref(ins[i + 2].operands[0] as int);
+        final nt = _pool.getNameAndType(fieldRef.nameAndTypeIndex);
+        final fieldName = _pool.getString(nt.nameIndex);
+        if (componentNames.contains(fieldName)) {
+          assignedFields.add(fieldName);
+          i += 3;
+          continue;
+        }
+      }
+      // 检查是否为 return
+      if (ins[i].opcode == Opcodes.return_ && i == ins.length - 1) {
+        // 所有组件都被赋值，且无用户代码
+        return assignedFields.length == componentNames.length;
+      }
+      // 其他指令 = 用户代码
+      return false;
+    }
     return false;
   }
 
@@ -721,6 +845,15 @@ class Decompiler {
     for (final e in sorted) {
       result = result.replaceAll(e.key, e.value);
     }
+
+    // 过滤掉未在代码中实际使用的 import（如 record 跳过的 ObjectMethods 等）
+    imports.removeWhere((fqcn) {
+      final simple = simpleOf(fqcn);
+      // 检查简单名是否在替换后的文本中出现（排除 import 行本身）
+      final bodyOnly =
+          result.replaceAll(RegExp(r'^import .+;$', multiLine: true), '');
+      return !bodyOnly.contains(simple);
+    });
 
     if (imports.isEmpty) return result;
 

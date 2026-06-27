@@ -1,13 +1,8 @@
-import java.lang.invoke.MethodHandles;
-import java.lang.invoke.MethodHandles$Lookup;
-import java.lang.runtime.ObjectMethods;
-
 public record v24_FlexibleConstructor$Range(int low, int high) {
 
-    public final String toString() {
-        return invokedynamic toString(this);
-    }
-    public final boolean equals(Object p0) {
-        return invokedynamic equals(this, p0);
+    public v24_FlexibleConstructor$Range {
+        if (p0 > p1) {
+            throw new IllegalArgumentException();
+        }
     }
 }

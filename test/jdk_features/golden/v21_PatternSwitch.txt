@@ -1,11 +1,4 @@
-import java.io.PrintStream;
-import java.lang.invoke.LambdaMetafactory;
-import java.lang.invoke.MethodHandles;
-import java.lang.invoke.MethodHandles$Lookup;
-import java.lang.invoke.StringConcatFactory;
-import java.lang.runtime.SwitchBootstraps;
 import java.util.LinkedHashMap;
-import java.util.Objects;
 import java.util.SequencedCollection;
 
 public class v21_PatternSwitch {

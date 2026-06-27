@@ -1,7 +1,5 @@
 package org.jetbrains.java.decompiler.code;
 
-import java.util.Set;
-
 public interface CodeConstants {
     public static final int TYPE_BYTE = 0;
     public static final int TYPE_CHAR = 1;

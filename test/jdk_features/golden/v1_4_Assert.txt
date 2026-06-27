@@ -18,9 +18,7 @@ public class v1_4_Assert {
     }
     public int withSideEffect(int[] p0, int p1) {
         if (v1_4_Assert.$assertionsDisabled == 0) {
-            if (p1 < 0) throw new AssertionError();
-            if (p1 >= p0.length) {
-            }
+            if (p1 < 0 || p1 >= p0.length) throw new AssertionError();
         }
         return p0[p1];
     }

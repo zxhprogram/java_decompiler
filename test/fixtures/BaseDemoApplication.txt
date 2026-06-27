@@ -1,6 +1,5 @@
 package com.chinatower.base;
 
-import java.io.PrintStream;
 import org.springframework.boot.ApplicationArguments;
 import org.springframework.boot.ApplicationRunner;
 import org.springframework.boot.SpringApplication;

@@ -1,7 +1,6 @@
 package com.chinatower.event.util;
 
 import com.chinatower.common.core.utils.StringUtils;
-import com.chinatower.event.constants.Constants;
 import java.math.BigDecimal;
 import java.text.ParseException;
 import java.text.SimpleDateFormat;
