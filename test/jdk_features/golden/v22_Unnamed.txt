@@ -12,11 +12,11 @@ public class v22_Unnamed {
     public int count(Iterable p0) {
         int p1 = 0;
         Iterator p2 = p0.iterator();
-      label_9:
-        if (!p2.hasNext()) return p1;
-        String p4 = ((String) p2.next());
-        p1 += 1;
-        goto label_9;
+        while (p2.hasNext()) {
+            String p4 = ((String) p2.next());
+            p1 += 1;
+        }
+        return p1;
     }
     public int tryIgnore(String p0) {
         int p1 = 0;

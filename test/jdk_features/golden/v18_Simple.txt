@@ -8,11 +8,11 @@ public class v18_Simple {
     public int sum(List p0) {
         int p1 = 0;
         Iterator p2 = p0.iterator();
-      label_9:
-        if (!p2.hasNext()) return p1;
-        Integer p4 = ((Integer) p2.next());
-        p1 = (p4.intValue() + p1);
-        goto label_9;
+        while (p2.hasNext()) {
+            Integer p4 = ((Integer) p2.next());
+            p1 = (p4.intValue() + p1);
+        }
+        return p1;
     }
     public String repeat(String p0, int p1) {
         return p0.repeat(p1);

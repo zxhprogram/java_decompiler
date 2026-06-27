@@ -488,7 +488,11 @@ class Decompiler {
     final displayReturn = rawName == '<init>' ? '' : returnType;
     final typeParamsPart =
         (typeParams != null && typeParams.isNotEmpty) ? '$typeParams ' : '';
-    final mods = AccessFlagFormatter.methodFlags(method.accessFlags);
+    // 接口方法默认抽象，不输出 abstract 关键字（与 javac 一致）。
+    final isInterface = (_cf.accessFlags & AccessFlags.ACC_INTERFACE) != 0;
+    final mods = AccessFlagFormatter.methodFlags(method.accessFlags)
+        .where((m) => !(isInterface && m == 'abstract'))
+        .toList();
     _writeMemberAnnotations(sb, method);
     sb.write(
         '    ${mods.join(' ')}${mods.isEmpty ? '' : ' '}${displayReturn.isEmpty ? '' : '$displayReturn '}$typeParamsPart$displayName(');

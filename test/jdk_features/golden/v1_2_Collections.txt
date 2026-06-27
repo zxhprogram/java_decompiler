@@ -21,19 +21,19 @@ public class v1_2_Collections implements Comparable {
         Collections.sort(p1);
         Iterator p2 = p1.iterator();
         int p3 = 0;
-      label_23:
-        if (!p2.hasNext()) return p1;
-        p3 = (((Integer) p2.next()).intValue() + p3);
-        goto label_23;
+        while (p2.hasNext()) {
+            p3 = (((Integer) p2.next()).intValue() + p3);
+        }
+        return p1;
     }
     public int sum(Collection p0) {
         int p1 = 0;
         Iterator p2 = p0.iterator();
-      label_9:
-        if (!p2.hasNext()) return p1;
-        Integer p4 = ((Integer) p2.next());
-        p1 = (p4.intValue() + p1);
-        goto label_9;
+        while (p2.hasNext()) {
+            Integer p4 = ((Integer) p2.next());
+            p1 = (p4.intValue() + p1);
+        }
+        return p1;
     }
     public int compareTo(Object p0) {
         return this.compareTo(((v1_2_Collections) p0));

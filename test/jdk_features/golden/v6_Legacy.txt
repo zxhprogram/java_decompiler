@@ -15,12 +15,10 @@ public class v6_Legacy implements Runnable {
         ArrayList p1 = new ArrayList();
         String[] p2 = p0;
         int p3 = p2.length;
-        int p4 = 0;
-      label_17:
-        if (p4 >= p3) return p1;
-        String p5 = p2[p4];
-        p1.add(p5);
-        p4 += 1;
-        goto label_17;
+        for (int p4 = 0; p4 < p3; p4++) {
+            String p5 = p2[p4];
+            p1.add(p5);
+        }
+        return p1;
     }
 }

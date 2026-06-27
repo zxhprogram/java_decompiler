@@ -10,24 +10,22 @@ public class v5_Generics {
     public int sum(List p0) {
         int p1 = 0;
         Iterator p2 = p0.iterator();
-      label_9:
-        if (!p2.hasNext()) return p1;
-        Integer p4 = ((Integer) p2.next());
-        p1 = (p4.intValue() + p1);
-        goto label_9;
+        while (p2.hasNext()) {
+            Integer p4 = ((Integer) p2.next());
+            p1 = (p4.intValue() + p1);
+        }
+        return p1;
     }
     @SafeVarargs
     public final String concat(String... p0) {
         StringBuilder p1 = new StringBuilder();
         String[] p2 = p0;
         int p3 = p2.length;
-        int p4 = 0;
-      label_17:
-        if (p4 >= p3) return p1.toString();
-        String p5 = p2[p4];
-        p1.append(p5);
-        p4 += 1;
-        goto label_17;
+        for (int p4 = 0; p4 < p3; p4++) {
+            String p5 = p2[p4];
+            p1.append(p5);
+        }
+        return p1.toString();
     }
     public int useEnum(v5_Generics$Color p0) {
 

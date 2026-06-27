@@ -14,11 +14,11 @@ public class v10_Var {
         p2.put("a", 1);
         int p4 = 0;
         Iterator p5 = p1.iterator();
-      label_46:
-        if (!p5.hasNext()) return (p0 + p4);
-        String p6 = ((String) p5.next());
-        p4 = (p6.length() + p4);
-        goto label_46;
+        while (p5.hasNext()) {
+            String p6 = ((String) p5.next());
+            p4 = (p6.length() + p4);
+        }
+        return (p0 + p4);
     }
     public List<String> typed() {
         ArrayList p0 = new ArrayList();

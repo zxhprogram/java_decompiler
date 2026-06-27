@@ -216,6 +216,12 @@ extension on CodePrinter {
     // !var -> var
     final notVar = RegExp(r'^!(\w+)$').firstMatch(trimmed);
     if (notVar != null) return notVar.group(1)!;
+    // !methodCall() / !field.access -> methodCall() / field.access
+    if (trimmed.startsWith('!')) {
+      final inner = trimmed.substring(1);
+      // 避免错误吞掉 !(...) 之外的复杂表达式：仅对方法调用/字段访问去否定
+      if (RegExp(r'^[\w.]+(\(.*\))?$').hasMatch(inner)) return inner;
+    }
     final eq0 = RegExp(r'^(.+) == 0$').firstMatch(cond);
     if (eq0 != null) {
       final inner = eq0.group(1)!.trim();
@@ -1101,6 +1107,68 @@ extension on CodePrinter {
             }
           }
           lines.replaceRange(i, replaceEnd, newLines);
+          changed = true;
+          break;
+        }
+
+        // 模式 C：`if (cond) return/throw ...;` 形式
+        // （while 循环通过 return/throw 退出，而非 goto exitLabel）
+        //   label_X:
+        //     if (!cond) return expr;
+        //     body;
+        //     goto label_X;
+        // 转换为：
+        //     while (cond) {
+        //         body;
+        //     }
+        //     return expr;
+        final ifTermRe = RegExp(r'^        if \((.+)\) ((?:return|throw).+;)$');
+        final ifTermMatch = ifTermRe.firstMatch(lines[j]);
+        if (ifTermMatch != null) {
+          final cond = ifTermMatch.group(1)!;
+          final terminator = ifTermMatch.group(2)!;
+
+          // 收集 body：从 j+1 到下一个 `goto label;`（回到循环头）
+          var g = j + 1;
+          int? gotoEnd;
+          while (g < lines.length) {
+            final gm = gotoRe.firstMatch(lines[g]);
+            if (gm != null && gm.group(1) == label) {
+              gotoEnd = g;
+              break;
+            }
+            if (labelRe.hasMatch(lines[g])) break;
+            g++;
+          }
+          if (gotoEnd == null) continue;
+
+          // 确保 label 只在本处定义和循环末尾被引用
+          var labelRefs = 0;
+          for (var n = 0; n < lines.length; n++) {
+            if (n == i || n == gotoEnd) continue;
+            if (lines[n].trim() == 'goto $label;' ||
+                lines[n].trim().startsWith('$label:')) {
+              labelRefs++;
+            }
+          }
+          if (labelRefs > 0) continue;
+
+          final bodyLines = lines
+              .sublist(j + 1, gotoEnd)
+              .where((l) => l.trim().isNotEmpty)
+              .toList();
+          final negCond = _negateCondition(cond);
+
+          final whileIndent = '        ';
+          final indentedBody = _reindentBlock(bodyLines, '            ');
+
+          final newLines = <String>[
+            '${whileIndent}while ($negCond) {',
+            ...indentedBody,
+            '$whileIndent}',
+            '$whileIndent$terminator',
+          ];
+          lines.replaceRange(i, gotoEnd + 1, newLines);
           changed = true;
           break;
         }
