@@ -2,17 +2,19 @@ public class v13_TextBlock {
     public v13_TextBlock() {
     }
     public String json() {
-        return "{
-  \"name\": \"Java 13\",
-  \"preview\": true
-}
-";
+        return """
+        {
+          "name": "Java 13",
+          "preview": true
+        }
+        """;
     }
     public String multiLine() {
-        String p0 = "SELECT *
-FROM users
-WHERE active = true
-";
+        String p0 = """
+        SELECT *
+        FROM users
+        WHERE active = true
+        """;
         return p0.trim();
     }
     public int withYield(int p0) {

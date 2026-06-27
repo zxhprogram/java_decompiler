@@ -232,7 +232,13 @@ extension on CodePrinter {
         case Opcodes.ldc:
         case Opcodes.ldc_w:
         case Opcodes.ldc2_w:
-          push(_pool.getLiteral(i.operands[0] as int));
+          final ldcEntry = _pool.get(i.operands[0] as int);
+          if (ldcEntry is CpString) {
+            final raw = _pool.getString(ldcEntry.stringIndex);
+            push(_formatStringLiteral(raw));
+          } else {
+            push(_pool.getLiteral(i.operands[0] as int));
+          }
         case Opcodes.iload:
         case Opcodes.lload:
         case Opcodes.fload:

@@ -57,11 +57,12 @@ public class AllJava21Syntax implements Advanced {
         int p7 = 1;
     }
     public String textBlock() {
-        return "{
-    \"name\": \"Java 21\",
-    \"features\": [\"records\", \"pattern matching\", \"virtual threads\"]
-}
-";
+        return """
+        {
+            "name": "Java 21",
+            "features": ["records", "pattern matching", "virtual threads"]
+        }
+        """;
     }
     public void loops() {
         int[] p0 = { 1, 2, 3, 4, 5 };
