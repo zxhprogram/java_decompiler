@@ -283,7 +283,7 @@ extension on CodePrinter {
   String _structureSimpleSwitch(String source) {
     var lines = source.split('\n');
 
-    final switchOpenRe = RegExp(r'^( {8,})switch \(([^)]+)\) \{$');
+    final switchOpenRe = RegExp(r'^( {8,})switch \((.+)\) \{$');
     final caseGotoRe = RegExp(r'^ +case (-?\d+): goto (label_\d+);$');
     final defaultGotoRe = RegExp(r'^ +default: goto (label_\d+);$');
     final anyLabelRe = RegExp(r'^ *(label_\d+):$');
@@ -522,6 +522,272 @@ extension on CodePrinter {
         }
 
         lines.replaceRange(i, replaceEnd, newLines);
+        changed = true;
+        break;
+      }
+    } while (changed);
+
+    return lines.join('\n');
+  }
+
+  /// 把 Java 字符串 switch 的两级结构（hashCode 分发 + equals 校验 + 序号 switch）
+  /// 合并还原为 `switch (var) { case "lit": ... }` 形式。
+  /// 必须在 [_structureSimpleSwitch] 之后运行——后者已把第二级 switch 结构化。
+  String _structureStringSwitch(String source) {
+    var lines = source.split('\n');
+
+    final hashCodeSwitchRe = RegExp(r'^( +)switch \((\w+)\.hashCode\(\)\) \{$');
+    final caseGotoRe = RegExp(r'^ +case (-?\d+): goto (label_\d+);$');
+    final defaultGotoRe = RegExp(r'^ +default: goto (label_\d+);$');
+    final anyLabelRe = RegExp(r'^ *(label_\d+):$');
+    // `if (!VAR.equals("LIT"))` 或 `if (VAR.equals("LIT"))`
+    final equalsRe = RegExp(r'(\w+)\.equals\("((?:[^"\\]|\\.)*)"\)');
+    final ordAssignRe = RegExp(r'^ +(\w+) = (\d+);$');
+
+    bool changed;
+    do {
+      changed = false;
+
+      final labelMap = <String, int>{};
+      for (var i = 0; i < lines.length; i++) {
+        final m = anyLabelRe.firstMatch(lines[i]);
+        if (m != null) labelMap[m.group(1)!] = i;
+      }
+
+      for (var i = 0; i < lines.length; i++) {
+        final sm = hashCodeSwitchRe.firstMatch(lines[i]);
+        if (sm == null) continue;
+        final indent = sm.group(1)!;
+        final hashVar = sm.group(2)!; // e.g. p1
+
+        // 找到 hashCode switch 的 `}`
+        late final int closeLine;
+        var depth = 1;
+        bool foundClose = false;
+        for (var k = i + 1; k < lines.length; k++) {
+          if (lines[k].contains('{')) depth++;
+          if (lines[k].contains('}')) {
+            depth--;
+            if (depth == 0) {
+              closeLine = k;
+              foundClose = true;
+              break;
+            }
+          }
+        }
+        if (!foundClose) continue;
+
+        // 解析 hashCode switch 的 case -> label 与 default -> merge label
+        final hashCases = <(int, String)>[];
+        String? mergeLabel;
+        for (var k = i + 1; k < closeLine; k++) {
+          final cm = caseGotoRe.firstMatch(lines[k]);
+          if (cm != null) {
+            hashCases.add((int.parse(cm.group(1)!), cm.group(2)!));
+            continue;
+          }
+          final dm = defaultGotoRe.firstMatch(lines[k]);
+          if (dm != null) {
+            mergeLabel = dm.group(1);
+          }
+        }
+        if (mergeLabel == null || hashCases.isEmpty) continue;
+
+        // 解析每个 case label 的 equals 校验块，构建 ordinal -> "literal" 映射
+        final ordToString = <int, String>{};
+        String? ordVar;
+
+        for (final (_, label) in hashCases) {
+          final pos = labelMap[label];
+          if (pos == null) continue;
+
+          // 收集该 label 到下一个 label 之间的非空行
+          final blockLines = <String>[];
+          for (var k = pos + 1; k < lines.length; k++) {
+            if (anyLabelRe.hasMatch(lines[k])) break;
+            if (lines[k].trim().isNotEmpty) blockLines.add(lines[k]);
+          }
+
+          String? literal;
+          int? ordinal;
+          for (final line in blockLines) {
+            final em = equalsRe.firstMatch(line);
+            if (em != null && em.group(1) == hashVar) {
+              literal = em.group(2);
+            }
+            final am = ordAssignRe.firstMatch(line);
+            if (am != null) {
+              ordVar = am.group(1);
+              ordinal = int.parse(am.group(2)!);
+            }
+          }
+          if (literal != null && ordinal != null) {
+            ordToString[ordinal!] = literal!;
+          }
+        }
+
+        if (ordVar == null || ordToString.isEmpty) continue;
+
+        // 找到 merge label 位置
+        final mergePos = labelMap[mergeLabel];
+        if (mergePos == null) continue;
+
+        // 在 merge label 之后找第二级 switch（on ordVar）
+        int? secondSwitchLine;
+        final secondSwitchRe =
+            RegExp(r'^ +switch \(' + RegExp.escape(ordVar!) + r'\) \{$');
+        for (var k = mergePos + 1; k < lines.length; k++) {
+          if (secondSwitchRe.hasMatch(lines[k])) {
+            secondSwitchLine = k;
+            break;
+          }
+        }
+        if (secondSwitchLine == null) continue;
+
+        // 找到第二级 switch 的 `}`
+        late final int secondCloseLine;
+        depth = 1;
+        foundClose = false;
+        for (var k = secondSwitchLine + 1; k < lines.length; k++) {
+          if (lines[k].contains('{')) depth++;
+          if (lines[k].contains('}')) {
+            depth--;
+            if (depth == 0) {
+              secondCloseLine = k;
+              foundClose = true;
+              break;
+            }
+          }
+        }
+        if (!foundClose) continue;
+
+        // 解析第二级 switch 的 case groups
+        // 格式（已被 _structureSimpleSwitch 结构化）：
+        //   case N:
+        //       BODY;
+        //   case M:
+        //   case P:
+        //       BODY2;
+        //   default:
+        //       DEFAULT_BODY;
+        final caseIndent = '$indent    ';
+        final bodyIndent = '$caseIndent    ';
+        final caseLineRe = RegExp(r'^ +case (-?\d+):$');
+        final defaultLineRe = RegExp(r'^ +default:$');
+
+        final ordGroups = <(List<int>, List<String>)>[]; // (ordinals, body)
+        var defaultBody = <String>[];
+
+        var k = secondSwitchLine + 1;
+        while (k < secondCloseLine) {
+          final line = lines[k];
+          if (line.trim().isEmpty) {
+            k++;
+            continue;
+          }
+
+          // 检查是否是 default
+          if (defaultLineRe.hasMatch(line)) {
+            k++;
+            // 收集 default body
+            final body = <String>[];
+            while (k < secondCloseLine) {
+              final bl = lines[k];
+              if (caseLineRe.hasMatch(bl) || defaultLineRe.hasMatch(bl)) break;
+              if (bl.trim().isNotEmpty) body.add(bl);
+              k++;
+            }
+            defaultBody = body;
+            continue;
+          }
+
+          // 收集 case 标签组
+          final ordinals = <int>[];
+          while (k < secondCloseLine) {
+            final cm = caseLineRe.firstMatch(lines[k]);
+            if (cm != null) {
+              ordinals.add(int.parse(cm.group(1)!));
+              k++;
+              continue;
+            }
+            break;
+          }
+          if (ordinals.isEmpty) {
+            k++;
+            continue;
+          }
+
+          // 收集 body
+          final body = <String>[];
+          while (k < secondCloseLine) {
+            final bl = lines[k];
+            if (caseLineRe.hasMatch(bl) || defaultLineRe.hasMatch(bl)) break;
+            if (bl.trim().isNotEmpty) body.add(bl);
+            k++;
+          }
+          ordGroups.add((ordinals, body));
+        }
+
+        // 查找原始选择器：向前找 `String hashVar = SELECTOR;`
+        String selector = hashVar;
+        for (var j = i - 1; j >= 0 && j >= i - 6; j--) {
+          final copyMatch = RegExp(r'^ +(?:java\.lang\.)?String ' +
+                  RegExp.escape(hashVar) +
+                  r' = (.+);$')
+              .firstMatch(lines[j]);
+          if (copyMatch != null) {
+            selector = copyMatch.group(1)!;
+            break;
+          }
+        }
+
+        // 确定替换范围：从 `String hashVar = ...;` 或 `int ordVar = -1;` 开始
+        // 到第二级 switch 结束
+        int replaceStart = i;
+        // 向前查找 `int ordVar = -1;` 或 `String hashVar = ...;`
+        for (var j = i - 1; j >= 0 && j >= i - 6; j--) {
+          final l = lines[j].trim();
+          final isCopy = RegExp(
+                  r'^(?:java\.lang\.)?String ' + RegExp.escape(hashVar) + r' =')
+              .hasMatch(l);
+          final isOrdInit = l.startsWith('int $ordVar');
+          if (isCopy || isOrdInit) {
+            replaceStart = j;
+          }
+          if (isCopy) break;
+        }
+
+        // 构建替换文本
+        final newLines = <String>['${indent}switch ($selector) {'];
+
+        for (final (ordinals, body) in ordGroups) {
+          // 为每个 ordinal 找到对应的 string literal
+          for (final ord in ordinals) {
+            final lit = ordToString[ord];
+            if (lit != null) {
+              newLines.add('${caseIndent}case "$lit":');
+            } else {
+              // 找不到对应的 string literal，保留 ordinal 形式
+              newLines.add('${caseIndent}case $ord:');
+            }
+          }
+          // 重新缩进 body
+          for (final bl in body) {
+            final trimmed = bl.trimLeft();
+            newLines.add('$bodyIndent$trimmed');
+          }
+        }
+
+        // default
+        newLines.add('${caseIndent}default:');
+        for (final bl in defaultBody) {
+          final trimmed = bl.trimLeft();
+          newLines.add('$bodyIndent$trimmed');
+        }
+
+        newLines.add('$indent}');
+
+        lines.replaceRange(replaceStart, secondCloseLine + 1, newLines);
         changed = true;
         break;
       }

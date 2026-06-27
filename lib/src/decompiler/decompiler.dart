@@ -189,7 +189,7 @@ class Decompiler {
             ? _classLiteral(constValueIndex)
             : _pool.getLiteral(constValueIndex),
       EnumElementValue(:final typeNameIndex, :final constNameIndex) =>
-        '${_pool.getString(typeNameIndex)}.${_pool.getString(constNameIndex)}',
+        '${DescriptorParser.parseFieldDescriptor(_pool.getString(typeNameIndex))}.${_pool.getString(constNameIndex)}',
       ClassElementValue(:final classInfoIndex) => _classLiteral(classInfoIndex),
       AnnotationElementValue(:final annotationValue) =>
         _annotationToString(annotationValue),
@@ -251,20 +251,32 @@ class Decompiler {
     if (kind == 'class') {
       final superName =
           _cf.superClass == 0 ? null : _pool.getClassName(_cf.superClass);
-      if (superName != null && superName != 'java/lang/Object') {
+      if (superName != null &&
+          superName != 'java/lang/Object' &&
+          !(kind == '@interface' &&
+              superName == 'java/lang/annotation/Annotation')) {
         sb.write(
             ' extends ${DescriptorParser.internalToSourceName(superName)}');
       }
     }
     if (_cf.interfaces.isNotEmpty) {
-      final keyword = kind == 'interface' || kind == '@interface'
-          ? ' extends '
-          : ' implements ';
-      final ifaces = _cf.interfaces
-          .map((idx) =>
-              DescriptorParser.internalToSourceName(_pool.getClassName(idx)))
-          .join(', ');
-      sb.write('$keyword$ifaces');
+      // 注解接口隐式继承 Annotation，不输出
+      final filtered = kind == '@interface'
+          ? _cf.interfaces
+              .where((idx) =>
+                  _pool.getClassName(idx) != 'java/lang/annotation/Annotation')
+              .toList()
+          : _cf.interfaces;
+      if (filtered.isNotEmpty) {
+        final keyword = kind == 'interface' || kind == '@interface'
+            ? ' extends '
+            : ' implements ';
+        final ifaces = filtered
+            .map((idx) =>
+                DescriptorParser.internalToSourceName(_pool.getClassName(idx)))
+            .join(', ');
+        sb.write('$keyword$ifaces');
+      }
     }
     if (permitted != null) {
       final names = permitted.classes
@@ -843,11 +855,16 @@ class Decompiler {
       }
     }
 
+    final skipAnnotation = (_cf.accessFlags & AccessFlags.ACC_ANNOTATION) != 0;
     for (var i = 1; i < _pool.length; i++) {
       final e = _pool.get(i);
       if (e is CpClass) {
         final raw = _pool.getString(e.nameIndex);
         if (!raw.startsWith('[')) {
+          // 注解接口隐式继承 Annotation，不收集为引用
+          if (skipAnnotation && raw == 'java/lang/annotation/Annotation') {
+            continue;
+          }
           addFqcn(DescriptorParser.internalToSourceName(raw));
         }
       }
@@ -857,8 +874,14 @@ class Decompiler {
         ? null
         : DescriptorParser.internalToSourceName(
             _pool.getClassName(_cf.superClass)));
+    final isAnnotation = (_cf.accessFlags & AccessFlags.ACC_ANNOTATION) != 0;
     for (final idx in _cf.interfaces) {
-      addFqcn(DescriptorParser.internalToSourceName(_pool.getClassName(idx)));
+      final ifaceName = _pool.getClassName(idx);
+      // 注解接口隐式继承 Annotation，不收集为引用
+      if (isAnnotation && ifaceName == 'java/lang/annotation/Annotation') {
+        continue;
+      }
+      addFqcn(DescriptorParser.internalToSourceName(ifaceName));
     }
 
     for (final f in _cf.fields) {

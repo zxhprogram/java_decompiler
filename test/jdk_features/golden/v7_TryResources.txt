@@ -24,40 +24,13 @@ public class v7_TryResources {
     }
     public String switchString(String p0) {
 
-        String p1 = p0;
-
-        int p2 = -1;
-        switch (p1.hashCode()) {
-            case -934426579: goto label_94;
-            case 3540994: goto label_66;
-            case 106440182: goto label_80;
-            case 109757538: goto label_52;
-            default: goto label_105;
-        }
-      label_52:
-        if (!p1.equals("start")) goto label_105;
-        p2 = 0;
-        goto label_105;
-      label_66:
-        if (!p1.equals("stop")) goto label_105;
-        p2 = 1;
-        goto label_105;
-      label_80:
-        if (!p1.equals("pause")) goto label_105;
-        p2 = 2;
-        goto label_105;
-      label_94:
-        if (p1.equals("resume")) {
-            p2 = 3;
-        }
-      label_105:
-        switch (p2) {
-            case 0:
+        switch (p0) {
+            case "start":
                 return "starting";
-            case 1:
+            case "stop":
                 return "stopping";
-            case 2:
-            case 3:
+            case "pause":
+            case "resume":
                 return "toggling";
             default:
                 return "unknown";

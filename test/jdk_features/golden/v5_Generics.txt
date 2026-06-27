@@ -30,20 +30,15 @@ public class v5_Generics {
     public int useEnum(v5_Generics$Color p0) {
 
         switch (p0.ordinal()) {
-            case 0: goto label_32;
-            case 1: goto label_34;
-            case 2: goto label_36;
-            default: goto label_38;
-        }
-      label_32:
-        return 1;
-      label_34:
-        return 2;
-      label_36:
-        return 3;
-      label_38:
-        return 0;
-    }
+            case 0:
+                return 1;
+            case 1:
+                return 2;
+            case 2:
+                return 3;
+            default:
+                return 0;
+        }    }
     public int staticImport(int p0) {
         return (1 + Math.abs(p0));
     }
