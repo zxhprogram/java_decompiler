@@ -77,6 +77,7 @@ class CodePrinter {
     final (raw, offsetToLine) = _printStackBased(instructions);
     var text = _preprocessPatternMatching(raw);
     text = _structureTryCatch(text, offsetToLine);
+    text = _liftIfGotoToTerminator(text);
     text = _structureIfs(text);
     text = _structurePatternSwitch(text);
     text = _structureSimpleSwitch(text);
@@ -94,8 +95,200 @@ class CodePrinter {
     text = _simplifyInstanceofRecordPattern(text);
     text = _removeStackUnderflow(text);
     text = _simplifyBoxing(text);
+    text = _simplifyConditions(text);
+    text = _flattenShortCircuitReturns(text);
+    text = _simplifyBooleanReturns(text);
     text = _restoreVariableNames(text);
     return text;
+  }
+
+  /// 对返回类型为 boolean 的方法，把 `return 0;`/`return 1;` 转换为
+  /// `return false;`/`return true;`，让源码更贴近原始 Java 写法。
+  String _simplifyBooleanReturns(String source) {
+    final descriptor = _pool.getString(_method.descriptorIndex);
+    final returnType = DescriptorParser.parseMethodDescriptor(descriptor).$2;
+    if (returnType != 'boolean') return source;
+    return source
+        .replaceAllMapped(
+          RegExp(r'return 0;'),
+          (m) => 'return false;',
+        )
+        .replaceAllMapped(
+          RegExp(r'return 1;'),
+          (m) => 'return true;',
+        );
+  }
+
+  /// 把 `if (!A) { if (!B) return X; } return Y;` 形式的嵌套短路返回
+  /// 展平为 `if (A) return Y; if (B) return Y; return X;`，
+  /// 让控制流更扁平、更易读。
+  ///
+  /// 这是 `A || B` 编译后的典型模式：
+  ///   if (A) goto trueLabel;
+  ///   if (!B) goto falseLabel;
+  /// trueLabel: return Y;
+  /// falseLabel: return X;
+  /// 提升后变成 `if (!A) { if (!B) return X; } return Y;`，
+  /// 进一步展平为两个独立的条件返回。
+  String _flattenShortCircuitReturns(String source) {
+    final lines = source.split('\n');
+    final ifOpenRe = RegExp(r'^( +)if \((.+)\) \{$');
+    final ifReturnRe = RegExp(r'^( +)if \((.+)\) (return .+;|throw .+;)$');
+    final returnRe = RegExp(r'^ +return (.+);$');
+    final closeRe = RegExp(r'^( +)\}$');
+
+    bool changed;
+    do {
+      changed = false;
+      for (var i = 0; i < lines.length - 3; i++) {
+        // 匹配 `if (!A) {`
+        final outer = ifOpenRe.firstMatch(lines[i]);
+        if (outer == null) continue;
+        final outerIndent = outer.group(1)!;
+        final outerCond = outer.group(2)!;
+        // 只处理 `!A` 形式
+        if (!outerCond.startsWith('!')) continue;
+
+        // 下一行是 `if (!B) return X;`（单行 if-return，更深缩进）
+        final inner = ifReturnRe.firstMatch(lines[i + 1]);
+        if (inner == null) continue;
+        final innerIndent = inner.group(1)!;
+        if (innerIndent.length != outerIndent.length + 4) continue;
+        final innerCond = inner.group(2)!;
+        if (!innerCond.startsWith('!')) continue;
+        final innerReturn = inner.group(3)!;
+
+        // 下一行是 `}`（与外层 if 同缩进）
+        final close = closeRe.firstMatch(lines[i + 2]);
+        if (close == null) continue;
+        if (close.group(1)! != outerIndent) continue;
+
+        // 下一行是 `return Y;`（与外层 if 同缩进）
+        final outerReturnM = returnRe.firstMatch(lines[i + 3]);
+        if (outerReturnM == null) continue;
+        // 检查缩进
+        final outerReturnIndent =
+            RegExp(r'^( +)').firstMatch(lines[i + 3])!.group(1)!;
+        if (outerReturnIndent != outerIndent) continue;
+        final outerReturn = 'return ${outerReturnM.group(1)};';
+
+        // 展平：`if (A) return Y; if (B) return Y; return X;`
+        // A = outerCond 去掉 !，B = innerCond 去掉 !
+        final a = _stripNot(outerCond);
+        final b = _stripNot(innerCond);
+        final newLines = <String>[
+          '${outerIndent}if ($a) $outerReturn',
+          '${outerIndent}if ($b) $outerReturn',
+          '${outerIndent}$innerReturn',
+        ];
+        lines.replaceRange(i, i + 4, newLines);
+        changed = true;
+        break;
+      }
+    } while (changed);
+
+    return lines.join('\n');
+  }
+
+  /// 去掉条件最外层的 `!`，处理 `!(expr)` 和 `!var` 两种形式。
+  String _stripNot(String cond) {
+    final trimmed = cond.trim();
+    if (trimmed.startsWith('!(') && trimmed.endsWith(')')) {
+      return trimmed.substring(2, trimmed.length - 1);
+    }
+    if (trimmed.startsWith('!')) {
+      return trimmed.substring(1);
+    }
+    return trimmed;
+  }
+
+  /// 简化条件表达式中的冗余比较：
+  /// - `expr == 0` → `!expr`（当 expr 是 boolean/method 调用时）
+  /// - `expr != 0` → `expr`
+  /// 仅在 if 条件中应用，避免改变赋值表达式语义。
+  String _simplifyConditions(String source) {
+    // 收集 boolean 类型的参数名（如 p2），用于简化 `p2 == 0` → `!p2`
+    final booleanParams = <String>{};
+    final paramTypes = _parameterTypes();
+    final isStatic = (_method.accessFlags & AccessFlags.ACC_STATIC) != 0;
+    var slot = isStatic ? 0 : 1;
+    for (final t in paramTypes) {
+      if (t == 'boolean') booleanParams.add('p$slot');
+      slot++;
+      if (t == 'long' || t == 'double') slot++;
+    }
+
+    final lines = source.split('\n');
+    // 手动匹配 `if (cond) rest`，其中 cond 内部可能含括号，需平衡。
+    final ifStartRe = RegExp(r'^( +)if \(');
+
+    for (var i = 0; i < lines.length; i++) {
+      final line = lines[i];
+      final sm = ifStartRe.firstMatch(line);
+      if (sm == null) continue;
+      final indent = sm.group(1)!;
+      // 从 `if (` 之后开始，找到匹配的 `)`
+      var depth = 1;
+      var start = sm.end;
+      var end = -1;
+      for (var k = start; k < line.length; k++) {
+        final c = line[k];
+        if (c == '(') depth++;
+        if (c == ')') {
+          depth--;
+          if (depth == 0) {
+            end = k;
+            break;
+          }
+        }
+      }
+      if (end < 0) continue;
+      final cond = line.substring(start, end);
+      final rest = line.substring(end + 1);
+      final simplified = _simplifyBoolCond(cond, booleanParams);
+      if (simplified != cond) {
+        lines[i] = '${indent}if ($simplified)$rest';
+      }
+    }
+    return lines.join('\n');
+  }
+
+  /// 简化布尔条件：`expr == 0` → `!expr`，`expr != 0` → `expr`。
+  /// 仅当 expr 看起来是布尔表达式（方法调用、boolean 变量）时应用。
+  String _simplifyBoolCond(String cond, [Set<String>? booleanParams]) {
+    final trimmed = cond.trim();
+    // expr == 0 → !expr
+    final eq0 = RegExp(r'^(.+) == 0$').firstMatch(trimmed);
+    if (eq0 != null) {
+      final inner = eq0.group(1)!.trim();
+      // 避免对数值表达式简化（如 i == 0 应保留）
+      if (_looksBoolean(inner, booleanParams)) {
+        return '!$inner';
+      }
+    }
+    // expr != 0 → expr
+    final ne0 = RegExp(r'^(.+) != 0$').firstMatch(trimmed);
+    if (ne0 != null) {
+      final inner = ne0.group(1)!.trim();
+      if (_looksBoolean(inner, booleanParams)) {
+        return inner;
+      }
+    }
+    return cond;
+  }
+
+  /// 判断表达式是否看起来是布尔类型（方法调用、已带 ! 的表达式、boolean 参数）。
+  /// 注意：仅对显式识别的 boolean 参数（如方法签名中标记为 boolean 的 p0/p1 等）
+  /// 简化，避免误把数值变量的 `== 0`/`!= 0` 简化为 `!var`/`var`。
+  bool _looksBoolean(String expr, [Set<String>? booleanParams]) {
+    // 方法调用（含 .equals, .contains, .isEmpty 等）
+    if (expr.contains('(') && expr.contains(')')) return true;
+    // 已经是 !expr 形式
+    if (expr.startsWith('!')) return true;
+    // 已知 boolean 参数（通过方法签名识别）
+    if (booleanParams != null && booleanParams.contains(expr.trim()))
+      return true;
+    return false;
   }
 
   /// 简化自动装箱调用：
@@ -2505,6 +2698,130 @@ class CodePrinter {
     return (storeTypes, storeSlots);
   }
 
+  /// 把 `if (cond) goto label_X; ... label_X: <terminator>;` 模式提升为
+  /// `if (cond) <terminator>;`，从而消除冗余标号、简化控制流。
+  ///
+  /// terminator 指会终结当前基本块的语句，例如 `return`、`throw`、`goto`。
+  /// 这种模式常见于 `A || B`、`A && B` 编译后的短路字节码：
+  ///   if (A) goto trueLabel;
+  ///   if (!B) goto falseLabel;
+  /// trueLabel:
+  ///   return 1;
+  /// falseLabel:
+  ///   return 0;
+  /// 转换后：
+  ///   if (A) return 1;
+  ///   if (!B) return 0;
+  String _liftIfGotoToTerminator(String source) {
+    final lines = source.split('\n');
+    final gotoRe = RegExp(r'^( +)if \((.+)\) goto (label_\d+);$');
+    final labelRe = RegExp(r'^( *)(label_\d+):$');
+    final terminatorRe = RegExp(r'^ +(?:return|throw|goto )');
+
+    bool changed;
+    do {
+      changed = false;
+      final labelMap = <String, int>{};
+      for (var i = 0; i < lines.length; i++) {
+        final m = labelRe.firstMatch(lines[i]);
+        if (m != null) labelMap[m.group(2)!] = i;
+      }
+
+      // 从后往前处理，避免索引变动影响。
+      for (var i = lines.length - 1; i >= 0; i--) {
+        final m = gotoRe.firstMatch(lines[i]);
+        if (m == null) continue;
+        final indent = m.group(1)!;
+        final cond = m.group(2)!;
+        final label = m.group(3)!;
+        final j = labelMap[label];
+        if (j == null || j <= i) continue;
+
+        // 收集 label 处连续的标号行（可能有多个标号在同一位置）。
+        var k = j;
+        final labelsHere = <String>[];
+        while (k < lines.length && labelRe.hasMatch(lines[k])) {
+          final lm = labelRe.firstMatch(lines[k])!;
+          labelsHere.add(lm.group(2)!);
+          k++;
+        }
+        if (k >= lines.length) continue;
+        // label 后的第一条实际语句必须是终结语句。
+        if (!terminatorRe.hasMatch(lines[k])) continue;
+
+        // 该终结语句只能是这条 goto 引用此 label，
+        // 否则其他跳转点也需要执行该终结语句，提升会改变语义。
+        // 这里检查：当前 label 的所有引用点，提升只能针对当前 goto。
+        // 简单起见：如果 label 被多个 goto 引用，跳过（保守策略）。
+        var refCount = 0;
+        for (var r = 0; r < lines.length; r++) {
+          if (lines[r].contains('goto $label;')) refCount++;
+        }
+        if (refCount != 1) continue;
+
+        // 关键检查：label 前一行必须是终结语句（return/throw/goto/}），
+        // 否则 label 会被 fall-through 到达，提升会丢失该路径。
+        // label 前一行是 j-1（如果 j > 0）。
+        if (j > 0) {
+          final prevLine = lines[j - 1].trim();
+          // 跳过空行
+          var pl = j - 1;
+          while (pl >= 0 && lines[pl].trim().isEmpty) pl--;
+          if (pl >= 0) {
+            final plTrimmed = lines[pl].trim();
+            // 终结语句：return, throw, goto, } 结尾, if (...) goto
+            final isTerminator = plTrimmed.startsWith('return ') ||
+                plTrimmed.startsWith('throw ') ||
+                plTrimmed.startsWith('goto ') ||
+                plTrimmed == '}' ||
+                RegExp(r'^if \(.+\) goto label_\d+;$').hasMatch(plTrimmed);
+            if (!isTerminator) {
+              // label 会被 fall-through 到达，不能提升
+              continue;
+            }
+          }
+        }
+
+        // body（if 到 label 之间）不能有未处理的 goto 跳到其他位置，
+        // 否则提升后控制流会错乱。这里放宽限制：允许 body 有任意内容，
+        // 因为提升只影响 label 处的语句，body 的控制流保持不变。
+
+        // 检查其他标号是否也被引用，如果 labelsHere 中有其他标号被引用，
+        // 不能删除它们。
+        final otherLabelsReferenced = <String>{};
+        for (final lb in labelsHere) {
+          if (lb == label) continue;
+          for (var r = 0; r < lines.length; r++) {
+            if (lines[r].contains('goto $lb;')) {
+              otherLabelsReferenced.add(lb);
+              break;
+            }
+          }
+        }
+        // 简化处理：如果 otherLabelsReferenced 非空，跳过（保守）
+        if (otherLabelsReferenced.isNotEmpty) continue;
+
+        // 提升：在 if 行后插入 `if (cond) <terminator>;`
+        // 重新构建：保留 i 之前，插入新的 if+terminator，保留 i+1 到 j-1（body），
+        // 跳过 j 到 k（labels 和 terminator），保留 k+1 之后
+        final terminatorLine = lines[k];
+        final result = <String>[
+          ...lines.sublist(0, i),
+          '${indent}if ($cond) ${terminatorLine.trim()}',
+          ...lines.sublist(i + 1, j),
+          ...lines.sublist(k + 1),
+        ];
+        lines
+          ..clear()
+          ..addAll(result);
+        changed = true;
+        break;
+      }
+    } while (changed);
+
+    return lines.join('\n');
+  }
+
   /// 把简单的 `if ... goto label` 伪代码转换成普通的 if 分支。
   String _structureIfs(String source) {
     final lines = source.split('\n');
@@ -2593,9 +2910,16 @@ class CodePrinter {
     final notVar = RegExp(r'^!(\w+)$').firstMatch(trimmed);
     if (notVar != null) return notVar.group(1)!;
     final eq0 = RegExp(r'^(.+) == 0$').firstMatch(cond);
-    if (eq0 != null) return eq0.group(1)!.trim();
+    if (eq0 != null) {
+      final inner = eq0.group(1)!.trim();
+      // 对 boolean 表达式（方法调用等）简化为 expr；对变量保留比较形式
+      return _looksBoolean(inner) ? inner : '$inner != 0';
+    }
     final ne0 = RegExp(r'^(.+) != 0$').firstMatch(cond);
-    if (ne0 != null) return '!${ne0.group(1)!.trim()}';
+    if (ne0 != null) {
+      final inner = ne0.group(1)!.trim();
+      return _looksBoolean(inner) ? '!$inner' : '$inner == 0';
+    }
     final cmp = RegExp(r'^(.+?) (==|!=|<=|>=|<|>) (.+)$').firstMatch(cond);
     if (cmp != null) {
       final left = cmp.group(1)!.trim();
@@ -4020,14 +4344,32 @@ class CodePrinter {
         ref = (cls, fname, fdesc);
       }
       final (params, ret) = DescriptorParser.parseMethodDescriptor(ref.$3);
-      final args = List.generate(params.length, (_) => stack.removeLast())
+      final rawArgs = List.generate(params.length, (_) => stack.removeLast())
           .reversed
-          .join(', ');
+          .toList();
+      // 对 boolean 类型参数把字面量 0/1 转为 false/true
+      final args = <String>[];
+      for (var ai = 0; ai < rawArgs.length; ai++) {
+        final a = rawArgs[ai];
+        final t = ai < params.length ? params[ai] : '';
+        if (t == 'boolean') {
+          if (a == '0') {
+            args.add('false');
+          } else if (a == '1') {
+            args.add('true');
+          } else {
+            args.add(a);
+          }
+        } else {
+          args.add(a);
+        }
+      }
+      final argsStr = args.join(', ');
       if (op == Opcodes.invokestatic) {
-        expr = '${ref.$1}.${ref.$2}($args)';
+        expr = '${ref.$1}.${ref.$2}($argsStr)';
       } else if (op == Opcodes.invokespecial && ref.$2 == '<init>') {
         if (stack.isEmpty) {
-          expr = '/*init underflow*/.<init>($args)';
+          expr = '/*init underflow*/.<init>($argsStr)';
         } else {
           final obj = stack.removeLast();
           // new Class() / dup / invokespecial <init> 合并成 new Class(args)
@@ -4035,18 +4377,18 @@ class CodePrinter {
             if (stack.isNotEmpty && stack.last == obj) {
               stack.removeLast(); // 移除 new 留下的占位对象
             }
-            expr = 'new ${ref.$1}($args)';
+            expr = 'new ${ref.$1}($argsStr)';
           } else {
-            expr = '$obj.<init>($args)';
+            expr = '$obj.<init>($argsStr)';
           }
         }
         return (expr, true);
       } else if (op == Opcodes.invokespecial) {
         final obj = stack.removeLast();
-        expr = '$obj.${ref.$2}($args)';
+        expr = '$obj.${ref.$2}($argsStr)';
       } else {
         final obj = stack.removeLast();
-        expr = '$obj.${ref.$2}($args)';
+        expr = '$obj.${ref.$2}($argsStr)';
       }
       returns = ret != 'void';
     }
