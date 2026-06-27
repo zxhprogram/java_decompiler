@@ -77,12 +77,19 @@ extension on CodePrinter {
       final (instParams, _) =
           DescriptorParser.parseMethodDescriptor(instantiatedDesc);
 
-      // 生成参数名
-      final paramNames = <String>[];
+      // 生成参数名：JDK 11+ (majorVersion >= 55) 使用 `var name`，
+      // 否则使用实际类型 `Type name`。
+      final useVar = _cf.majorVersion >= 55; // JDK 11 = major 55
+      final paramDecls = <String>[];
       for (var i = 0; i < instParams.length; i++) {
-        paramNames.add(String.fromCharCode(0x61 + i)); // a, b, c, ...
+        final name = String.fromCharCode(0x61 + i); // a, b, c, ...
+        if (useVar) {
+          paramDecls.add('var $name');
+        } else {
+          paramDecls.add('${instParams[i]} $name');
+        }
       }
-      final paramsStr = paramNames.join(', ');
+      final paramsStr = paramDecls.join(', ');
 
       // 尝试反编译 lambda 方法
       final lambdaBody = _decompileLambdaBody(implCls, implName, implDesc);

@@ -35,7 +35,7 @@ public class v9_InterfacePrivate {
         }
     }
     public v9_InterfacePrivate$Validator nonEmptyValidator() {
-        return (a) -> {
+        return (String a) -> {
   if (a != null) {
   if (a.length() > 0) {
   return true;

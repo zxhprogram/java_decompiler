@@ -7,13 +7,13 @@ public class v11_LambdaVar {
     public v11_LambdaVar() {
     }
     public Function<Integer, Integer> addOne() {
-        return (a) -> Integer.valueOf((1 + a.intValue()));
+        return (var a) -> Integer.valueOf((1 + a.intValue()));
     }
     public Function<String, String> upper() {
-        return (a) -> a.toUpperCase();
+        return (var a) -> a.toUpperCase();
     }
     public Function<Integer, Integer> mixedAnnotated() {
-        return (a) -> Integer.valueOf((2 * a.intValue()));
+        return (var a) -> Integer.valueOf((2 * a.intValue()));
     }
     public String notBlank(String p0) {
         if (!p0.isBlank()) return p0.strip();

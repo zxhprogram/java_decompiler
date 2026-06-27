@@ -180,8 +180,8 @@ public class AllJava21Syntax implements Advanced {
 
         java.util.function.Consumer p1 = System.out::println;
         java.util.function.Supplier p2 = () -> "hello";
-        java.util.function.BiFunction p3 = (a, b) -> Integer.valueOf((b.intValue() + a.intValue()));
-        java.util.function.Function p5 = (a) -> a.toUpperCase();
+        java.util.function.BiFunction p3 = (var a, var b) -> Integer.valueOf((b.intValue() + a.intValue()));
+        java.util.function.Function p5 = (var a) -> a.toUpperCase();
         this.list.forEach(p1);
     }
     public void nestedClasses() {

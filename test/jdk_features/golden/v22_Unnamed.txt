@@ -59,7 +59,7 @@ public class v22_Unnamed {
 
     }
     public long lambdaIgnore(Stream p0) {
-        return p0.filter((a) -> true).count();
+        return p0.filter((var a) -> true).count();
     }
     private static boolean lambda$lambdaIgnore$0(String p0) {
         return true;
