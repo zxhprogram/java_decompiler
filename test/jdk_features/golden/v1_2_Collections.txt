@@ -11,29 +11,29 @@ public class v1_2_Collections implements Comparable {
         this.key = p0;
     }
     public strictfp double computeStrict(double p0, double p1) {
-        return ((p0 / p2) + (p2 * p0));
+        return ((p0 / p1) + (p1 * p0));
     }
     public int compareTo(v1_2_Collections p0) {
         return Integer.compare(this.key, p0.key);
     }
     public List<Integer> sortAndIterate(Collection<Integer> p0) {
-        ArrayList p1 = new ArrayList(p0);
-        Collections.sort(p1);
-        Iterator p2 = p1.iterator();
-        int p3 = 0;
-        while (p2.hasNext()) {
-            p3 = (((Integer) p2.next()).intValue() + p3);
+        ArrayList p2 = new ArrayList(p0);
+        Collections.sort(p2);
+        Iterator p3 = p2.iterator();
+        int p4 = 0;
+        while (p3.hasNext()) {
+            p4 = (((Integer) p3.next()).intValue() + p4);
         }
-        return p1;
+        return p2;
     }
     public int sum(Collection p0) {
-        int p1 = 0;
-        Iterator p2 = p0.iterator();
-        while (p2.hasNext()) {
-            Integer p4 = ((Integer) p2.next());
-            p1 = (p4.intValue() + p1);
+        int p2 = 0;
+        Iterator p3 = p0.iterator();
+        while (p3.hasNext()) {
+            Integer p4 = ((Integer) p3.next());
+            p2 = (p4.intValue() + p2);
         }
-        return p1;
+        return p2;
     }
     public int compareTo(Object p0) {
         return this.compareTo(((v1_2_Collections) p0));

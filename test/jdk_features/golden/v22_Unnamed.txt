@@ -5,46 +5,46 @@ public class v22_Unnamed {
     public v22_Unnamed() {
     }
     public int count(Iterable p0) {
-        int p1 = 0;
-        Iterator p2 = p0.iterator();
-        while (p2.hasNext()) {
-            String p4 = ((String) p2.next());
-            p1 += 1;
+        int p2 = 0;
+        Iterator p3 = p0.iterator();
+        while (p3.hasNext()) {
+            String p4 = ((String) p3.next());
+            p2 += 1;
         }
-        return p1;
+        return p2;
     }
     public int tryIgnore(String p0) {
-        int p1 = 0;
+        int p2 = 0;
         try {
-            p1 = (Integer.parseInt(p0) + p1);
+            p2 = (Integer.parseInt(p0) + p2);
         } catch (NumberFormatException _) {
         }
-        return p1;
+        return p2;
     }
     public String describe(Object p0) {
 
-        Object p1 = p0;
-        int p2 = 0;
+        Object p2 = p0;
+        int p3 = 0;
       label_4:
-        switch (invokedynamic typeSwitch(p1, p2)) {
+        switch (invokedynamic typeSwitch(p2, p3)) {
             case -1: goto label_91;
             case 0: goto label_36;
             case 1: goto label_86;
             default: goto label_96;
         }
       label_36:
-        v22_Unnamed$Point p3 = ((v22_Unnamed$Point) p1);
-        int p5 = p3.x();
-        int p6 = p5;
+        v22_Unnamed$Point p4 = ((v22_Unnamed$Point) p2);
+        int p6 = p4.x();
+        int p7 = p6;
 
-        int p4 = p5;
-        p5 = p3.y();
+        int p5 = p6;
+        p6 = p4.y();
         goto label_76;
 
-        p2 = 1;
+        p3 = 1;
         goto label_4;
       label_76:
-        return "x=" + p4;
+        return "x=" + p5;
       label_86:
         return "an int";
       label_91:

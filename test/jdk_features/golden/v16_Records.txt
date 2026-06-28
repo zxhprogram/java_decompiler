@@ -3,26 +3,26 @@ public class v16_Records {
     }
     public String describe(Object p0) {
         if ((p0 instanceof v16_Records$Point)) {
-            v16_Records$Point p1 = ((v16_Records$Point) p0);
-            return "point " + p1.x() + "," + p1.y();
+            v16_Records$Point p2 = ((v16_Records$Point) p0);
+            return "point " + p2.x() + "," + p2.y();
         }
         if ((p0 instanceof String)) {
-            String p1 = ((String) p0);
-            if (p1.length() > 3) {
-                return "long string: " + p1;
+            String p2 = ((String) p0);
+            if (p2.length() > 3) {
+                return "long string: " + p2;
             }
         }
         if (!(p0 instanceof Integer)) return "other";
-        Integer p1 = ((Integer) p0);
-        return "int: " + p1;
+        Integer p2 = ((Integer) p0);
+        return "int: " + p2;
     }
     public double area(v16_Records$Shape p0) {
         if ((p0 instanceof v16_Records$Circle)) {
-            v16_Records$Circle p1 = ((v16_Records$Circle) p0);
-            return (p1.r() * (p1.r() * 3.141592653589793));
+            v16_Records$Circle p2 = ((v16_Records$Circle) p0);
+            return (p2.r() * (p2.r() * 3.141592653589793));
         }
         if (!(p0 instanceof v16_Records$Square)) return 0.0;
-        v16_Records$Square p1 = ((v16_Records$Square) p0);
-        return (p1.side() * p1.side());
+        v16_Records$Square p2 = ((v16_Records$Square) p0);
+        return (p2.side() * p2.side());
     }
 }

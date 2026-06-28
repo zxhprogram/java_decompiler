@@ -3,28 +3,28 @@ public class v17_Sealed {
     }
     public String classify(v17_Sealed$Shape p0) {
         if ((p0 instanceof v17_Sealed$Circle)) {
-            v17_Sealed$Circle p1 = ((v17_Sealed$Circle) p0);
-            return "circle r=" + p1.r;
+            v17_Sealed$Circle p2 = ((v17_Sealed$Circle) p0);
+            return "circle r=" + p2.r;
         }
         if ((p0 instanceof v17_Sealed$Rectangle)) {
-            v17_Sealed$Rectangle p1 = ((v17_Sealed$Rectangle) p0);
-            return "rect " + p1.w + "x" + p1.h;
+            v17_Sealed$Rectangle p2 = ((v17_Sealed$Rectangle) p0);
+            return "rect " + p2.w + "x" + p2.h;
         }
         if (!(p0 instanceof v17_Sealed$Triangle)) return "unknown";
-        v17_Sealed$Triangle p1 = ((v17_Sealed$Triangle) p0);
-        return "tri " + p1.base + "x" + p1.height;
+        v17_Sealed$Triangle p2 = ((v17_Sealed$Triangle) p0);
+        return "tri " + p2.base + "x" + p2.height;
     }
     public double area(v17_Sealed$Shape p0) {
         if ((p0 instanceof v17_Sealed$Circle)) {
-            v17_Sealed$Circle p1 = ((v17_Sealed$Circle) p0);
-            return (p1.r * (p1.r * 3.141592653589793));
+            v17_Sealed$Circle p2 = ((v17_Sealed$Circle) p0);
+            return (p2.r * (p2.r * 3.141592653589793));
         }
         if ((p0 instanceof v17_Sealed$Rectangle)) {
-            v17_Sealed$Rectangle p1 = ((v17_Sealed$Rectangle) p0);
-            return (p1.h * p1.w);
+            v17_Sealed$Rectangle p2 = ((v17_Sealed$Rectangle) p0);
+            return (p2.h * p2.w);
         }
         if (!(p0 instanceof v17_Sealed$Triangle)) return 0.0;
-        v17_Sealed$Triangle p1 = ((v17_Sealed$Triangle) p0);
-        return (p1.height * (p1.base * 0.5));
+        v17_Sealed$Triangle p2 = ((v17_Sealed$Triangle) p0);
+        return (p2.height * (p2.base * 0.5));
     }
 }

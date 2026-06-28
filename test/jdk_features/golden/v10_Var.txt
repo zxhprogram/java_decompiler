@@ -7,22 +7,22 @@ public class v10_Var {
     public v10_Var() {
     }
     public int locals() {
-        int p0 = 10;
-        ArrayList p1 = new ArrayList();
-        HashMap p2 = new HashMap();
-        p1.add("a");
-        p2.put("a", 1);
+        int p1 = 10;
+        ArrayList p2 = new ArrayList();
+        HashMap p3 = new HashMap();
+        p2.add("a");
+        p3.put("a", 1);
         int p4 = 0;
-        Iterator p5 = p1.iterator();
+        Iterator p5 = p2.iterator();
         while (p5.hasNext()) {
             String p6 = ((String) p5.next());
             p4 = (p6.length() + p4);
         }
-        return (p0 + p4);
+        return (p1 + p4);
     }
     public List<String> typed() {
-        ArrayList p0 = new ArrayList();
-        p0.add("x");
-        return p0;
+        ArrayList p1 = new ArrayList();
+        p1.add("x");
+        return p1;
     }
 }

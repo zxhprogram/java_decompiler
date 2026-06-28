@@ -13,18 +13,18 @@ public class v9_InterfacePrivate {
         return Map.of("a", 1, "b", 2);
     }
     public String tryWithEffectivelyFinal() throws Exception {
-        BufferedReader p0 = new BufferedReader(new StringReader("hi"));
-        BufferedReader p1 = p0;
+        BufferedReader p1 = new BufferedReader(new StringReader("hi"));
+        BufferedReader p2 = p1;
         try {
-            String p2 = p0.readLine();
-            if (p1 != null) {
-                p1.close();
+            String p3 = p1.readLine();
+            if (p2 != null) {
+                p2.close();
             }
-            return p2;
+            return p3;
         } catch (Throwable e) {
 
             try {
-                p1.close();
+                p2.close();
             } catch (Throwable e) {
                 e.addSuppressed(e);
             }

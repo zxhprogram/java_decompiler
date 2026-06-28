@@ -11,7 +11,7 @@ public class v8_Lambdas {
         this.data = p0;
     }
     public Function curriedAdd(int p0) {
-        return (Integer a) -> Integer.valueOf((b.intValue() + a));
+        return (Integer a) -> Integer.valueOf((a.intValue() + p0));
     }
     public Supplier<String> methodRef() {
         return this::toString;
@@ -27,7 +27,7 @@ public class v8_Lambdas {
 }).map(String::toUpperCase).sorted().collect(Collectors.toList()));
     }
     public Optional<String> first(String p0) {
-        return this.data.stream().filter((String a) -> b.startsWith(a)).findFirst();
+        return this.data.stream().filter((String a) -> a.startsWith(p0)).findFirst();
     }
     public int reduce() {
         return this.data.stream().mapToInt(String::length).sum();

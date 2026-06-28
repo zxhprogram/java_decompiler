@@ -4,8 +4,8 @@ public class v19_VirtualThreads {
     public String describe(Object p0) {
         return switch (p0) {
             case v19_VirtualThreads$Point(int x, int y) -> "point " + x + "," + y;
-            case v19_VirtualThreads$Circle p6 when p6.r() > 0.0 -> "circle r=" + p6.r();
-            case v19_VirtualThreads$Circle p7 -> "circle";
+            case v19_VirtualThreads$Circle p7 when p7.r() > 0.0 -> "circle r=" + p7.r();
+            case v19_VirtualThreads$Circle p8 -> "circle";
             case null -> "null";
             default -> "other";
         };
@@ -19,9 +19,9 @@ public class v19_VirtualThreads {
         };
     }
     public String virtualThread() throws InterruptedException {
-        Thread p0 = Thread.startVirtualThread(() -> System.out.println("hi"));
-        p0.join();
-        return p0.toString();
+        Thread p1 = Thread.startVirtualThread(() -> System.out.println("hi"));
+        p1.join();
+        return p1.toString();
     }
     private static void lambda$virtualThread$0() {
         System.out.println("hi");

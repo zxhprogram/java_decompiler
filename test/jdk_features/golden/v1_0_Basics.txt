@@ -8,36 +8,36 @@ public class v1_0_Basics {
     }
     public int controlFlow(int p0) {
 
-        int p1 = 0;
+        int p2 = 0;
 
         if (p0 > 0) {
-            p1 = p0;
+            p2 = p0;
         } else if (p0 < 0) {
-            p1 = (-p0);
+            p2 = (-p0);
         } else {
-            p1 = 0;
+            p2 = 0;
         }
-        for (int p2 = 0; p2 < p0; p2++) {
-            p1 = (p2 + p1);
+        for (int p3 = 0; p3 < p0; p3++) {
+            p2 = (p3 + p2);
         }
-        for (p2 = 0; p2 < p0; p2++) {
-            p1 = (p2 + p1);
+        for (p3 = 0; p3 < p0; p3++) {
+            p2 = (p3 + p2);
         }
         int p4 = 0;
         do {
-            p1 = (p4 + p1);
+            p2 = (p4 + p2);
             p4 += 1;
         } while (p4 < p0);
         switch (p0) {
             case 0:
-                p1 = 0;
+                p2 = 0;
                 break;
             case 1:
             case 2:
-                p1 = 100;
+                p2 = 100;
                 break;
             default:
-                p1 = -1;
+                p2 = -1;
         }
         int[] p5 = { 1, 2, 3 };
         int[][] p6 = new int[2][2];
@@ -56,22 +56,22 @@ public class v1_0_Basics {
             }
         }
 
-        return p1;
+        return p2;
     }
     public String tryCatch(String p0) {
         try {
-            int p1 = Integer.parseInt(p0);
-            String p2 = new StringBuilder().append("ok:").append(p1).toString();
+            int p2 = Integer.parseInt(p0);
+            String p3 = new StringBuilder().append("ok:").append(p2).toString();
             System.out.println("finally");
-            return p2;
-            NumberFormatException p1 = /*exception*/;
-            String p2 = "bad";
+            return p3;
+            NumberFormatException p2 = /*exception*/;
+            String p3 = "bad";
             System.out.println("finally");
-            return p2;
+            return p3;
         } catch (RuntimeException _) {
-            p2 = "runtime";
+            p3 = "runtime";
             System.out.println("finally");
-            return p2;
+            return p3;
         } finally {
             System.out.println("finally");
         }

@@ -8,24 +8,24 @@ public class v5_Generics {
     }
     @v5_Generics$MyAnno(value = "demo", count = 3)
     public int sum(List p0) {
-        int p1 = 0;
-        Iterator p2 = p0.iterator();
-        while (p2.hasNext()) {
-            Integer p4 = ((Integer) p2.next());
-            p1 = (p4.intValue() + p1);
+        int p2 = 0;
+        Iterator p3 = p0.iterator();
+        while (p3.hasNext()) {
+            Integer p4 = ((Integer) p3.next());
+            p2 = (p4.intValue() + p2);
         }
-        return p1;
+        return p2;
     }
     @SafeVarargs
     public final String concat(String... p0) {
-        StringBuilder p1 = new StringBuilder();
-        String[] p2 = p0;
-        int p3 = p2.length;
-        for (int p4 = 0; p4 < p3; p4++) {
-            String p5 = p2[p4];
-            p1.append(p5);
+        StringBuilder p2 = new StringBuilder();
+        String[] p3 = p0;
+        int p4 = p3.length;
+        for (int p5 = 0; p5 < p4; p5++) {
+            String p6 = p3[p5];
+            p2.append(p6);
         }
-        return p1.toString();
+        return p2.toString();
     }
     public int useEnum(v5_Generics$Color p0) {
 
@@ -43,8 +43,8 @@ public class v5_Generics {
         return (1 + Math.abs(p0));
     }
     public Map<String, Integer> genericMap() {
-        HashMap p0 = new HashMap();
-        p0.put("a", 1);
-        return p0;
+        HashMap p1 = new HashMap();
+        p1.put("a", 1);
+        return p1;
     }
 }

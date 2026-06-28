@@ -92,7 +92,15 @@ extension on CodePrinter {
       final paramsStr = paramDecls.join(', ');
 
       // 尝试反编译 lambda 方法
-      final lambdaBody = _decompileLambdaBody(implCls, implName, implDesc);
+      // 捕获变量数 = implDesc 参数数 - instParams 参数数
+      final (implParams, _) = DescriptorParser.parseMethodDescriptor(implDesc);
+      final capturedCount = implParams.length - instParams.length;
+      final lambdaBody = _decompileLambdaBody(
+        implCls,
+        implName,
+        implDesc,
+        capturedArgs: capturedArgs.take(capturedCount).toList(),
+      );
       if (lambdaBody != null) {
         return '($paramsStr) -> $lambdaBody';
       }
@@ -128,8 +136,14 @@ extension on CodePrinter {
   /// 反编译 lambda 方法，返回 body 表达式或语句块。
   /// 对于简单 lambda（单个表达式），返回表达式字符串（不带花括号和分号）。
   /// 返回 null 表示无法反编译。
+  /// [capturedArgs] 是从外部作用域捕获的变量表达式列表，按顺序对应 impl 方法描述符中
+  /// 前 N 个参数（N = capturedArgs.length），其余参数是 lambda 形参。
   String? _decompileLambdaBody(
-      String implCls, String implName, String implDesc) {
+    String implCls,
+    String implName,
+    String implDesc, {
+    List<String> capturedArgs = const [],
+  }) {
     // 在当前类中查找 lambda 方法
     MethodInfo? lambdaMethod;
     for (final m in _cf.methods) {
@@ -158,8 +172,16 @@ extension on CodePrinter {
     final isStatic = (lambdaMethod.accessFlags & 0x0008) != 0;
     final paramOffset = isStatic ? 0 : 1;
     final varReplacements = <String, String>{};
-    for (var i = 0; i < paramTypes.length; i++) {
+    final capturedCount = capturedArgs.length;
+    // 前 capturedCount 个参数是捕获变量，用捕获表达式替换
+    for (var i = 0; i < capturedCount; i++) {
       final lambdaVar = 'p${i + paramOffset}';
+      varReplacements[lambdaVar] = capturedArgs[i];
+    }
+    // 剩余参数是 lambda 形参，映射到 a, b, c...
+    final lambdaParamCount = paramTypes.length - capturedCount;
+    for (var i = 0; i < lambdaParamCount; i++) {
+      final lambdaVar = 'p${i + capturedCount + paramOffset}';
       final paramName = String.fromCharCode(0x61 + i); // a, b, c...
       varReplacements[lambdaVar] = paramName;
     }

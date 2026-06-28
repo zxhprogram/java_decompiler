@@ -3,59 +3,59 @@ public class v20_RecordPatterns {
     }
     public String nested(Object p0) {
         if ((p0 instanceof v20_RecordPatterns$Colored)) {
-            v20_RecordPatterns$Colored p1 = ((v20_RecordPatterns$Colored) p0);
-            v20_RecordPatterns$Point p6 = p1.p();
-            if ((p6 instanceof v20_RecordPatterns$Point)) {
-                v20_RecordPatterns$Point p2 = p6;
-                String p6 = p1.color();
-                v20_RecordPatterns$Point p3 = p6;
-                int p6 = p2.x();
-                int p7 = p6;
+            v20_RecordPatterns$Colored p2 = ((v20_RecordPatterns$Colored) p0);
+            v20_RecordPatterns$Point p7 = p2.p();
+            if ((p7 instanceof v20_RecordPatterns$Point)) {
+                v20_RecordPatterns$Point p3 = p7;
+                String p7 = p2.color();
+                v20_RecordPatterns$Point p4 = p7;
+                int p7 = p3.x();
+                int p8 = p7;
 
-                int p4 = p6;
-                p6 = p2.y();
-                p7 = p6;
+                int p5 = p7;
+                p7 = p3.y();
+                p8 = p7;
 
-                int p5 = p6;
-                return p3 + ":" + p4 + "," + p5;
+                int p6 = p7;
+                return p4 + ":" + p5 + "," + p6;
             }
         }
         return "n/a";
     }
     public String describe(Object p0) {
 
-        Object p1 = p0;
-        int p2 = 0;
+        Object p2 = p0;
+        int p3 = 0;
       label_4:
-        switch (invokedynamic typeSwitch(p1, p2)) {
+        switch (invokedynamic typeSwitch(p2, p3)) {
             case -1: goto label_156;
             case 0: goto label_36;
             case 1: goto label_132;
             default: goto label_161;
         }
       label_36:
-        v20_RecordPatterns$Colored p3 = ((v20_RecordPatterns$Colored) p1);
-        v20_RecordPatterns$Point p8 = p3.p();
-        if ((p8 instanceof v20_RecordPatterns$Point)) {
-            v20_RecordPatterns$Point p4 = p8;
-            String p8 = p3.color();
-            v20_RecordPatterns$Point p5 = p8;
-            int p8 = p4.x();
-            int p9 = p8;
+        v20_RecordPatterns$Colored p4 = ((v20_RecordPatterns$Colored) p2);
+        v20_RecordPatterns$Point p9 = p4.p();
+        if ((p9 instanceof v20_RecordPatterns$Point)) {
+            v20_RecordPatterns$Point p5 = p9;
+            String p9 = p4.color();
+            v20_RecordPatterns$Point p6 = p9;
+            int p9 = p5.x();
+            int p10 = p9;
 
-            int p6 = p8;
-            p8 = p4.y();
-            p9 = p8;
+            int p7 = p9;
+            p9 = p5.y();
+            p10 = p9;
 
-            int p7 = p8;
+            int p8 = p9;
         } else {
-            p2 = 1;
+            p3 = 1;
             goto label_4;
         }
-        return p5 + "@" + p6 + "," + p7;
+        return p6 + "@" + p7 + "," + p8;
       label_132:
-        v20_RecordPatterns$Point p8 = ((v20_RecordPatterns$Point) p1);
-        return "point " + p8.x() + "," + p8.y();
+        v20_RecordPatterns$Point p9 = ((v20_RecordPatterns$Point) p2);
+        return "point " + p9.x() + "," + p9.y();
       label_156:
         return "null";
       label_161:
@@ -64,16 +64,16 @@ public class v20_RecordPatterns {
     }
     public int sumComponents(Object p0) {
 
-        Object p1 = p0;
-        int p2 = 0;
+        Object p2 = p0;
+        int p3 = 0;
       label_9:
-        switch (invokedynamic typeSwitch(p1, p2)) {
+        switch (invokedynamic typeSwitch(p2, p3)) {
             case 0: goto label_44;
             case 1: goto label_104;
             default: goto label_200;
         }
       label_44:
-        v20_RecordPatterns$Point p4 = ((v20_RecordPatterns$Point) p1);
+        v20_RecordPatterns$Point p4 = ((v20_RecordPatterns$Point) p2);
         int p7 = p4.x();
         int p8 = p7;
 
@@ -84,12 +84,12 @@ public class v20_RecordPatterns {
         int p6 = p7;
         goto label_96;
 
-        p2 = 1;
+        p3 = 1;
         goto label_9;
       label_96:
         return (p6 + p5);
       label_104:
-        v20_RecordPatterns$Colored p7 = ((v20_RecordPatterns$Colored) p1);
+        v20_RecordPatterns$Colored p7 = ((v20_RecordPatterns$Colored) p2);
         v20_RecordPatterns$Point p12 = p7.p();
         if ((p12 instanceof v20_RecordPatterns$Point)) {
             v20_RecordPatterns$Point p8 = p12;
@@ -104,7 +104,7 @@ public class v20_RecordPatterns {
 
             int p11 = p12;
         } else {
-            p2 = 2;
+            p3 = 2;
             goto label_9;
         }
         return (p9.length() + (p11 + p10));

@@ -1,7 +1,7 @@
 public record v24_FlexibleConstructor$Range(int low, int high) {
 
     public v24_FlexibleConstructor$Range {
-        if (p0 > p1) {
+        if (low > high) {
             throw new IllegalArgumentException();
         }
     }

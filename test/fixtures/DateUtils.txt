@@ -172,7 +172,7 @@ public class DateUtils {
     }
     public static String getTimeDifference(Date p0, Date p1) {
         long p2 = (p0.getTime() - p1.getTime());
-        if ((p2 <=> 86400000L) < 0) {
+        if (p2 < 86400000L) {
             long p4 = (p2 / 3600000L);
             long p6 = ((p2 - (3600000L * p4)) / 60000L);
             long p8 = (((p2 - (3600000L * p4)) - (60000L * p6)) / 1000L);
@@ -182,7 +182,7 @@ public class DateUtils {
             new Object[4][3] = Long.valueOf(p8);
             return String.format("%d天 %02d:%02d:%02d", new Object[4]);
         }
-        if ((p2 <=> 86400000L) <= 0) return "0天0小时0分0秒";
+        if (p2 <= 86400000L) return "0天0小时0分0秒";
         p4 = (p2 / 86400000L);
         p6 = ((p2 - (86400000L * p4)) / 3600000L);
         p8 = (((p2 - (86400000L * p4)) - (3600000L * p6)) / 60000L);
@@ -191,13 +191,13 @@ public class DateUtils {
     }
     public static String getTimeDifference2(Date p0, Date p1) {
         long p2 = (p0.getTime() - p1.getTime());
-        if ((p2 <=> 86400000L) < 0) {
+        if (p2 < 86400000L) {
             long p4 = (p2 / 3600000L);
             long p6 = ((p2 - (3600000L * p4)) / 60000L);
             long p8 = (((p2 - (3600000L * p4)) - (60000L * p6)) / 1000L);
             return new StringBuilder().append(p4).append("小时").append(p6).append("分").append(p8).append("秒").toString();
         }
-        if ((p2 <=> 86400000L) <= 0) return "0天0小时0分0秒";
+        if (p2 <= 86400000L) return "0天0小时0分0秒";
         p4 = (p2 / 86400000L);
         p6 = ((p2 - (86400000L * p4)) / 3600000L);
         p8 = (((p2 - (86400000L * p4)) - (3600000L * p6)) / 60000L);
@@ -213,7 +213,7 @@ public class DateUtils {
     public static Date subtractTime(Date p0, int p1) {
         try {
             SimpleDateFormat p2 = new SimpleDateFormat("yyyy-MM-dd HH:mm:ss");
-            String p3 = p2.format(Long.valueOf(((i2l(p1)) + p0.getTime())));
+            String p3 = p2.format(Long.valueOf((((long) (p1)) + p0.getTime())));
             return p2.parse(p3);
         } catch (Exception e) {
             e.printStackTrace();

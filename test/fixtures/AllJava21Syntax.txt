@@ -26,14 +26,14 @@ public class AllJava21Syntax implements Advanced {
     public synchronized void syncMethod() {
     }
     public double strictAdd(double p0, double p1) {
-        return (p2 + p0);
+        return (p1 + p0);
     }
     @SafeVarargs
     public final void varargsMethod(List<String>... p0) {
-        List<String>[] p1 = p0;
-        int p2 = p1.length;
-        for (int p3 = 0; p3 < p2; p3++) {
-            List<String> p5 = p1[p3];
+        List<String>[] p2 = p0;
+        int p3 = p2.length;
+        for (int p4 = 0; p4 < p3; p4++) {
+            List<String> p5 = p2[p4];
             System.out.println(p5);
         }
     }
@@ -42,9 +42,9 @@ public class AllJava21Syntax implements Advanced {
         return p0;
     }
     public void literals() {
-        int p0 = 1000000;
-        int p1 = 175;
-        double p2 = 3.141592653;
+        int p1 = 1000000;
+        int p2 = 175;
+        double p3 = 3.141592653;
         float p5 = 0.001500000013038516f;
         int p6 = 65;
         int p7 = 1;
@@ -58,43 +58,43 @@ public class AllJava21Syntax implements Advanced {
         """;
     }
     public void loops() {
-        int[] p0 = { 1, 2, 3, 4, 5 };
-        for (int p1 = 0; p1 < p0.length; p1++) {
-            p0[p1] = (2 * p0[p1]);
+        int[] p1 = { 1, 2, 3, 4, 5 };
+        for (int p2 = 0; p2 < p1.length; p2++) {
+            p1[p2] = (2 * p1[p2]);
         }
-        int[] p1 = p0;
-        int p2 = p1.length;
-        for (int p3 = 0; p3 < p2; p3++) {
-            int p5 = p1[p3];
+        int[] p2 = p1;
+        int p3 = p2.length;
+        for (int p4 = 0; p4 < p3; p4++) {
+            int p5 = p2[p4];
             System.out.println(p5);
         }
       outer:
-        for (int p1 = 0; p1 < 3; p1++) {
-            p2 = 0;
-            while (p2 < 3) {
-                if (p1 == 1) {
-                    if (p2 == 1) {
+        for (int p2 = 0; p2 < 3; p2++) {
+            p3 = 0;
+            while (p3 < 3) {
+                if (p2 == 1) {
+                    if (p3 == 1) {
                         break outer;
                     }
                 }
-                if (p2 != 0) {
-                    System.out.println(p1 + "," + p2);
+                if (p3 != 0) {
+                    System.out.println(p2 + "," + p3);
                 }
-                p2 += 1;
+                p3 += 1;
             }
         }
 
-        for (p1 = 0; p1 < 3; p1++) {
+        for (p2 = 0; p2 < 3; p2++) {
         }
         do {
-            p1 += -1;
-        } while (p1 > 0);
+            p2 += -1;
+        } while (p2 > 0);
     }
     public void instanceOfPatterns(Object p0) {
         if ((p0 instanceof String)) {
-            String p1 = ((String) p0);
-            if (p1.length() > 5) {
-                System.out.println(p1.toUpperCase());
+            String p2 = ((String) p0);
+            if (p2.length() > 5) {
+                System.out.println(p2.toUpperCase());
             }
         }
          if (p0 instanceof Point(x, y)) {
@@ -109,32 +109,26 @@ public class AllJava21Syntax implements Advanced {
         }
     }
     public String switchPattern(Object p0) {
-        switch (p0) {
+        return switch (p0) {
             case null -> "null";
-            case String p3 -> {
-                if (p3.isEmpty()) return "empty string";
-            }
-            case String p4 -> "string: " + p4;
-            case Integer p5 -> {
-                if (p5.intValue() > 0) return "positive int";
-            }
-            case Integer p6 -> "int: " + p6;
-            case Point(x, y) -> {
-                if (x == y) return "diagonal " + x;
-            }
-            case Point p10 -> "point " + p10;
-            case Constant p11 -> "constant " + p11.value();
-            case Add p13 -> "add";
+            case String p4 when p4.isEmpty() != 0 -> "empty string";
+            case String p5 -> "string: " + p5;
+            case Integer p6 when p6.intValue() > 0 -> "positive int";
+            case Integer p7 -> "int: " + p7;
+            case Point p8 when p8.x() == p8.y() -> "diagonal " + p8.x();
+            case Point p11 -> "point " + p11;
+            case Constant(int value) -> "constant " + value;
+            case Add p14 -> "add";
             default -> "unknown";
-        }
+        };
 
     }
     public double sealedSwitch(Shape p0) {
 
         return switch (p0) {
-            case Circle p3 -> p3.area();
-            case Rectangle p4 -> p4.area();
-            case Polygon p5 -> p5.area();
+            case Circle(double area) -> area;
+            case Rectangle(double area) -> area;
+            case Polygon(double area) -> area;
             default -> throw new IllegalStateException("Unexpected value: " + p0);
         };
 
@@ -160,37 +154,37 @@ public class AllJava21Syntax implements Advanced {
         }
 
         try {
-            BufferedReader p0 = new BufferedReader(new StringReader("hello"));
-            StringWriter p1 = new StringWriter();
-            p1.write(p0.readLine());
+            BufferedReader p1 = new BufferedReader(new StringReader("hello"));
+            StringWriter p2 = new StringWriter();
+            p2.write(p1.readLine());
 
         } catch (IOException e) {
             throw new RuntimeException(e);
         }
     }
     public void lambdas() {
-        java.util.function.Function p0 = String::length;
+        java.util.function.Function p1 = String::length;
 
-        java.util.function.Consumer p1 = System.out::println;
-        java.util.function.Supplier p2 = () -> "hello";
-        java.util.function.BiFunction p3 = (var a, var b) -> Integer.valueOf((b.intValue() + a.intValue()));
+        java.util.function.Consumer p2 = System.out::println;
+        java.util.function.Supplier p3 = () -> "hello";
+        java.util.function.BiFunction p4 = (var a, var b) -> Integer.valueOf((b.intValue() + a.intValue()));
         java.util.function.Function p5 = (var a) -> a.toUpperCase();
-        this.list.forEach(p1);
+        this.list.forEach(p2);
     }
     public void nestedClasses() {
         new AllJava21Syntax$1StaticLike(this).say();
         new AllJava21Syntax$1Inner(this).useOuter();
         System.out.println(new AllJava21Syntax$1Local(this).value);
-        AllJava21Syntax$1 p0 = new AllJava21Syntax$1(this);
-        p0.run();
+        AllJava21Syntax$1 p1 = new AllJava21Syntax$1(this);
+        p1.run();
     }
     public void virtualThreads() throws InterruptedException {
-        Thread p0 = Thread.startVirtualThread(() -> System.out.println("virtual"));
-        p0.join();
+        Thread p1 = Thread.startVirtualThread(() -> System.out.println("virtual"));
+        p1.join();
         try {
-            ExecutorService p1 = Executors.newVirtualThreadPerTaskExecutor();
-            Future p2 = p1.submit(() -> "result");
-            System.out.println(((String) p2.get()));
+            ExecutorService p2 = Executors.newVirtualThreadPerTaskExecutor();
+            Future p3 = p2.submit(() -> "result");
+            System.out.println(((String) p3.get()));
 
         } catch (ExecutionException e) {
             throw new RuntimeException(e);
@@ -209,7 +203,7 @@ public class AllJava21Syntax implements Advanced {
         }
 
         try {
-            int p1 = Integer.parseInt("x");
+            int p2 = Integer.parseInt("x");
         } catch (NumberFormatException _) {
             System.out.println("bad number");
         }
@@ -221,10 +215,10 @@ public class AllJava21Syntax implements Advanced {
         return 42;
     }
     public void generics() {
-        List p0 = List.of(1, 2.0, 3L);
-        List p1 = Arrays.asList(new Integer[]{ 1, 2, 3 });
-        Optional p2 = Optional.empty();
-        List p3 = List.of("x", "y");
+        List p1 = List.of(1, 2.0, 3L);
+        List p2 = Arrays.asList(new Integer[]{ 1, 2, 3 });
+        Optional p3 = Optional.empty();
+        List p4 = List.of("x", "y");
     }
     public static void main(String[] p0) throws Exception {
         AllJava21Syntax p1 = new AllJava21Syntax();

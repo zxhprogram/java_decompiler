@@ -4,11 +4,11 @@ public class v24_FlexibleConstructor {
     public v24_FlexibleConstructor() {
     }
     public String classify(Object p0) {
-        Object p1 = p0;
+        Object p2 = p0;
 
-        int p2 = 0;
+        int p3 = 0;
       label_4:
-        switch (invokedynamic typeSwitch(p1, p2)) {
+        switch (invokedynamic typeSwitch(p2, p3)) {
             case -1: goto label_130;
             case 0: goto label_44;
             case 1: goto label_73;
@@ -17,19 +17,19 @@ public class v24_FlexibleConstructor {
             default: goto label_135;
         }
       label_44:
-        int p3 = ((Integer) p1).intValue();
-        if (p3 > 0) return "positive int: " + p3;
-        p2 = 1;
+        int p4 = ((Integer) p2).intValue();
+        if (p4 > 0) return "positive int: " + p4;
+        p3 = 1;
         goto label_4;
       label_73:
-        int p4 = ((Integer) p1).intValue();
-        return "int: " + p4;
+        int p5 = ((Integer) p2).intValue();
+        return "int: " + p5;
       label_92:
-        long p5 = ((Long) p1).longValue();
-        return "long: " + p5;
+        long p6 = ((Long) p2).longValue();
+        return "long: " + p6;
       label_111:
-        double p7 = ((Double) p1).doubleValue();
-        return "double: " + p7;
+        double p8 = ((Double) p2).doubleValue();
+        return "double: " + p8;
       label_130:
         return "null";
       label_135:

@@ -9,16 +9,15 @@ public class v15_TextBlock {
         """;
     }
     public String withEscape() {
-        String p0 = """
+        String p1 = """
         line1 line2  
         line3
         """;
-        return p0;
+        return p1;
     }
     public String interpolate(String p0) {
-        new Object[1][0] = p0;
         return """
         greeting: %s
-        """.formatted(new Object[1]);
+        """.formatted(new Object[]{ p0 });
     }
 }

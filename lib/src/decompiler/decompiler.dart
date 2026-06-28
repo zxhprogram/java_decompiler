@@ -387,12 +387,29 @@ class Decompiler {
     if (code != null) {
       final printer = CodePrinter(method, code, _cf);
       final body = printer.printBody();
+      // 将 p0, p1, ... 替换为 record 组件名（low, high, ...）
+      final renamed = _renameRecordParams(body, componentNames);
       // 剥离自动生成的代码行
-      final cleaned = _stripGeneratedConstructorCode(body, componentNames);
+      final cleaned = _stripGeneratedConstructorCode(renamed, componentNames);
       sb.write(cleaned);
     }
 
     sb.writeln('    }');
+  }
+
+  /// 将 record 紧凑构造器中的 `p0`, `p1`, ... 替换为组件名。
+  /// 参数槽位 1 对应 p0（第一个组件），槽位 2 对应 p1（第二个组件），以此类推。
+  String _renameRecordParams(String body, List<String> componentNames) {
+    var result = body;
+    for (var i = 0; i < componentNames.length; i++) {
+      final placeholder = 'p$i';
+      final name = componentNames[i];
+      result = result.replaceAll(
+        RegExp(r'\b' + RegExp.escape(placeholder) + r'\b'),
+        name,
+      );
+    }
+    return result;
   }
 
   /// 从构造器反编译结果中剥离编译器自动生成的代码：

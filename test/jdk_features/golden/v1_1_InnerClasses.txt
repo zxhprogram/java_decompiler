@@ -8,13 +8,13 @@ public class v1_1_InnerClasses {
         return new v1_1_InnerClasses$1(this);
     }
     public int localClass(int p0) {
-        v1_1_InnerClasses$1Local p1 = new v1_1_InnerClasses$1Local(this, p0);
-        return p1.square();
+        v1_1_InnerClasses$1Local p2 = new v1_1_InnerClasses$1Local(this, p0);
+        return p2.square();
     }
     public int useInner() {
-        v1_1_InnerClasses$MemberInner p0 = new v1_1_InnerClasses$MemberInner(this);
-        v1_1_InnerClasses$StaticNested p1 = new v1_1_InnerClasses$StaticNested();
-        return (p1.value + p0.get());
+        v1_1_InnerClasses$MemberInner p1 = new v1_1_InnerClasses$MemberInner(this);
+        v1_1_InnerClasses$StaticNested p2 = new v1_1_InnerClasses$StaticNested();
+        return (p2.value + p1.get());
     }
     static int access$000(v1_1_InnerClasses p0) {
         return p0.outerField;

@@ -5,13 +5,13 @@ public class v18_Simple {
     public v18_Simple() {
     }
     public int sum(List p0) {
-        int p1 = 0;
-        Iterator p2 = p0.iterator();
-        while (p2.hasNext()) {
-            Integer p4 = ((Integer) p2.next());
-            p1 = (p4.intValue() + p1);
+        int p2 = 0;
+        Iterator p3 = p0.iterator();
+        while (p3.hasNext()) {
+            Integer p4 = ((Integer) p3.next());
+            p2 = (p4.intValue() + p2);
         }
-        return p1;
+        return p2;
     }
     public String repeat(String p0, int p1) {
         return p0.repeat(p1);

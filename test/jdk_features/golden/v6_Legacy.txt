@@ -11,13 +11,13 @@ public class v6_Legacy implements Runnable {
         System.out.println(new StringBuilder().append("running: ").append(this.name).toString());
     }
     public List<String> toList(String[] p0) {
-        ArrayList p1 = new ArrayList();
-        String[] p2 = p0;
-        int p3 = p2.length;
-        for (int p4 = 0; p4 < p3; p4++) {
-            String p5 = p2[p4];
-            p1.add(p5);
+        ArrayList p2 = new ArrayList();
+        String[] p3 = p0;
+        int p4 = p3.length;
+        for (int p5 = 0; p5 < p4; p5++) {
+            String p6 = p3[p5];
+            p2.add(p6);
         }
-        return p1;
+        return p2;
     }
 }

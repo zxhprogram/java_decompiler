@@ -7,11 +7,11 @@ public class v21_PatternSwitch {
     public String describe(Object p0) {
         return switch (p0) {
             case v21_PatternSwitch$Point(int x, int y) -> "point " + x + "," + y;
-            case v21_PatternSwitch$Circle p6 when p6.r() > 0.0 -> "circle r=" + p6.r();
-            case v21_PatternSwitch$Circle p7 -> "circle";
+            case v21_PatternSwitch$Circle p7 when p7.r() > 0.0 -> "circle r=" + p7.r();
+            case v21_PatternSwitch$Circle p8 -> "circle";
             case v21_PatternSwitch$Rect(double w, double h) -> "rect " + w + "x" + h;
             case null -> "null";
-            case Integer p9 -> "int " + p9;
+            case Integer p10 -> "int " + p10;
             default -> "other";
         };
 
@@ -27,16 +27,16 @@ public class v21_PatternSwitch {
         return ((String) p0.getFirst()) + "..." + ((String) p0.getLast());
     }
     public String virtualThread() throws InterruptedException {
-        Thread p0 = Thread.ofVirtual().start(() -> System.out.println("v"));
-        p0.join();
+        Thread p1 = Thread.ofVirtual().start(() -> System.out.println("v"));
+        p1.join();
         return "done";
     }
     public LinkedHashMap<String, Integer> sequencedMap() {
-        LinkedHashMap p0 = new LinkedHashMap();
-        p0.put("a", 1);
-        p0.put("b", 2);
-        p0.putFirst("z", 0);
-        return p0;
+        LinkedHashMap p1 = new LinkedHashMap();
+        p1.put("a", 1);
+        p1.put("b", 2);
+        p1.putFirst("z", 0);
+        return p1;
     }
     private static void lambda$virtualThread$0() {
         System.out.println("v");

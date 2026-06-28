@@ -22,8 +22,8 @@ public class v12_SwitchExpr {
     public String withBlock(int p0) {
         switch (p0) {
             case 1:
-                String p2 = "one";
-                return p2.toUpperCase();
+                String p3 = "one";
+                return p3.toUpperCase();
             default:
         }
         return "other";

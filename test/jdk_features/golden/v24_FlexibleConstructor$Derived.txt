@@ -2,10 +2,11 @@ class v24_FlexibleConstructor$Derived extends v24_FlexibleConstructor$Base {
     final int scaled;
 
     v24_FlexibleConstructor$Derived(int p0, int p1) {
-        int p2 = (p1 * p0);
-        if (p2 < 0) {
-            p2 = 0;
+        int p3 = (p1 * p0);
+        if (p3 < 0) {
+            p3 = 0;
         }
-        this.scaled = p2;
+        super(p3);
+        this.scaled = p3;
     }
 }

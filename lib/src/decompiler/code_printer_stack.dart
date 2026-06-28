@@ -588,7 +588,25 @@ extension on CodePrinter {
               Opcodes.i2b ||
               Opcodes.i2c ||
               Opcodes.i2s:
-          push('(${i.mnemonic}(${pop()}))');
+          final _castType = switch (i.opcode) {
+            Opcodes.i2l => 'long',
+            Opcodes.i2f => 'float',
+            Opcodes.i2d => 'double',
+            Opcodes.l2i => 'int',
+            Opcodes.l2f => 'float',
+            Opcodes.l2d => 'double',
+            Opcodes.f2i => 'int',
+            Opcodes.f2l => 'long',
+            Opcodes.f2d => 'double',
+            Opcodes.d2i => 'int',
+            Opcodes.d2l => 'long',
+            Opcodes.d2f => 'float',
+            Opcodes.i2b => 'byte',
+            Opcodes.i2c => 'char',
+            Opcodes.i2s => 'short',
+            _ => 'int'
+          };
+          push('((${_castType}) (${pop()}))');
         case Opcodes.lcmp ||
               Opcodes.fcmpl ||
               Opcodes.fcmpg ||
@@ -712,7 +730,7 @@ extension on CodePrinter {
           final (expr, returns) = _invokeFromStack(i, stack);
           if (returns) {
             push(expr);
-          } else {
+          } else if (expr.isNotEmpty) {
             out.writeln('        $expr;');
           }
         case Opcodes.new_:
@@ -724,7 +742,23 @@ extension on CodePrinter {
         case Opcodes.anewarray:
           final etype = DescriptorParser.internalToSourceName(
               _pool.getClassName(i.operands[0] as int));
-          push('new $etype[${pop()}]');
+          final size = pop();
+          // 检测数组字面量初始化模式：
+          // anewarray N, dup, iconst_0, xload, aastore, [iconst_1, xload, aastore, ...]
+          // 若紧跟此模式，生成 `new Type[]{v0, v1, ...}` 并跳过相应指令
+          final (literalExpr, skipTo) = _tryBuildArrayLiteral(
+            ins,
+            idx,
+            etype,
+            size,
+            localNames,
+          );
+          if (literalExpr != null) {
+            push(literalExpr);
+            idx = skipTo;
+          } else {
+            push('new $etype[$size]');
+          }
         case Opcodes.multianewarray:
           final dims = i.operands[1] as int;
           // operand[0] 指向 CpClass，其名为字段描述符（如 `[[I` 或 `[Ljava/lang/Object;`）。
@@ -799,7 +833,7 @@ extension on CodePrinter {
 
     // 未命名的参数占位
     var slot = isStatic ? 0 : 1;
-    final (_, paramTypes) = DescriptorParser.parseMethodDescriptor(descriptor);
+    final (paramTypes, _) = DescriptorParser.parseMethodDescriptor(descriptor);
     for (var i = 0; i < paramTypes.length; i++) {
       if (!names.containsKey(slot)) names[slot] = 'p$i';
       slot++;
@@ -1734,19 +1768,46 @@ extension on CodePrinter {
       } else if (op == Opcodes.invokespecial && ref.$2 == '<init>') {
         if (stack.isEmpty) {
           expr = '/*init underflow*/.<init>($argsStr)';
-        } else {
-          final obj = stack.removeLast();
-          // new Class() / dup / invokespecial <init> 合并成 new Class(args)
-          if (obj.startsWith('new ${ref.$1}(')) {
-            if (stack.isNotEmpty && stack.last == obj) {
-              stack.removeLast(); // 移除 new 留下的占位对象
-            }
-            expr = 'new ${ref.$1}($argsStr)';
-          } else {
-            expr = '$obj.<init>($argsStr)';
-          }
+          return (expr, false);
         }
-        return (expr, true);
+        final obj = stack.removeLast();
+        // new Class() / dup / invokespecial <init> 合并成 new Class(args)
+        if (obj.startsWith('new ${ref.$1}(')) {
+          if (stack.isNotEmpty && stack.last == obj) {
+            stack.removeLast(); // 移除 new 留下的占位对象
+          }
+          expr = 'new ${ref.$1}($argsStr)';
+          return (expr, true);
+        }
+        // super(...) 或 this(...) 调用：obj 通常是 `this`
+        // 生成 `super(args)` 或 `this(args)` 并作为语句输出
+        if (obj == 'this') {
+          // 判断是 super 还是 this 调用
+          final thisClassName = DescriptorParser.internalToSourceName(
+              _pool.getClassName(_cf.thisClass));
+          final isThisCall = ref.$1 == thisClassName;
+          if (isThisCall) {
+            // this(args) 调用总是保留
+            expr = 'this($argsStr)';
+            return (expr, false);
+          }
+          // super 调用：
+          // - super() 无参：Java 中隐式，跳过
+          // - super(name, ordinal) 到 java.lang.Enum：编译器生成，跳过
+          // - super(...) 到 java.lang.Object：跳过
+          final superClassName = ref.$1;
+          if (argsStr.isEmpty) {
+            return ('', false); // 隐式 super()
+          }
+          if (superClassName == 'java.lang.Object' ||
+              superClassName == 'java.lang.Enum') {
+            return ('', false); // 编译器生成
+          }
+          expr = 'super($argsStr)';
+          return (expr, false);
+        }
+        expr = '$obj.<init>($argsStr)';
+        return (expr, false);
       } else if (op == Opcodes.invokespecial) {
         final obj = stack.removeLast();
         expr = '$obj.${ref.$2}($argsStr)';
@@ -1772,6 +1833,139 @@ extension on CodePrinter {
       _ => '?',
     };
   }
+
+  /// 尝试检测并构建数组字面量初始化模式：
+  /// `anewarray N, dup, iconst_0, xload, aastore, [iconst_1, xload, aastore, ...]`
+  ///
+  /// 从 [startIdx]（指向 anewarray）开始检测，返回生成的字面量表达式和
+  /// 应跳转到的下一条指令索引（指向 aastore 之后的指令）。
+  /// 若模式不匹配，返回 (null, startIdx)。
+  (String?, int) _tryBuildArrayLiteral(
+    List<Instruction> ins,
+    int startIdx,
+    String etype,
+    String sizeExpr,
+    Map<int, String> localNames,
+  ) {
+    // 必须是常量大小
+    final size = int.tryParse(sizeExpr);
+    if (size == null || size < 0 || size > 16) return (null, startIdx);
+    var i = startIdx + 1;
+    // 下一条必须是 dup
+    if (i >= ins.length || ins[i].opcode != Opcodes.dup)
+      return (null, startIdx);
+    i++;
+    final elements = <String>[];
+    for (var k = 0; k < size; k++) {
+      // 期望：iconst_k 或 bipush/ldc k
+      final idxInstr = ins[i];
+      if (idxInstr == null) return (null, startIdx);
+      final idxOk = switch (idxInstr.opcode) {
+        Opcodes.iconst_m1 => k == -1,
+        Opcodes.iconst_0 => k == 0,
+        Opcodes.iconst_1 => k == 1,
+        Opcodes.iconst_2 => k == 2,
+        Opcodes.iconst_3 => k == 3,
+        Opcodes.iconst_4 => k == 4,
+        Opcodes.iconst_5 => k == 5,
+        Opcodes.bipush => (idxInstr.operands[0] as int) == k,
+        _ => false,
+      };
+      if (!idxOk) return (null, startIdx);
+      i++;
+      // 加载值：iload/aload/ldc/iconst 等（仅处理简单 load 指令）
+      if (i >= ins.length) return (null, startIdx);
+      final loadInstr = ins[i];
+      final value = _loadExpr(loadInstr, localNames);
+      if (value == null) return (null, startIdx);
+      i++;
+      // aastore
+      if (i >= ins.length || ins[i].opcode != Opcodes.aastore) {
+        return (null, startIdx);
+      }
+      i++;
+      elements.add(value);
+    }
+    return ('new $etype[]{ ${elements.join(', ')} }', i - 1);
+  }
+
+  /// 返回 load 指令对应的表达式，若不是支持的 load 指令则返回 null。
+  String? _loadExpr(Instruction i, Map<int, String> localNames) {
+    switch (i.opcode) {
+      case Opcodes.aconst_null:
+        return 'null';
+      case Opcodes.iconst_m1:
+        return '-1';
+      case Opcodes.iconst_0:
+        return '0';
+      case Opcodes.iconst_1:
+        return '1';
+      case Opcodes.iconst_2:
+        return '2';
+      case Opcodes.iconst_3:
+        return '3';
+      case Opcodes.iconst_4:
+        return '4';
+      case Opcodes.iconst_5:
+        return '5';
+      case Opcodes.lconst_0:
+        return '0L';
+      case Opcodes.lconst_1:
+        return '1L';
+      case Opcodes.fconst_0:
+        return '0.0F';
+      case Opcodes.fconst_1:
+        return '1.0F';
+      case Opcodes.fconst_2:
+        return '2.0F';
+      case Opcodes.dconst_0:
+        return '0.0';
+      case Opcodes.dconst_1:
+        return '1.0';
+      case Opcodes.bipush:
+        return '${i.operands[0]}';
+      case Opcodes.sipush:
+        return '${i.operands[0]}';
+      case Opcodes.ldc:
+      case Opcodes.ldc_w:
+      case Opcodes.ldc2_w:
+        return _ldcValue(i.operands[0] as int);
+      case Opcodes.iload:
+      case Opcodes.lload:
+      case Opcodes.fload:
+      case Opcodes.dload:
+      case Opcodes.aload:
+        return localNames[i.operands[0] as int] ?? 'var${i.operands[0]}';
+      case Opcodes.iload_0:
+      case Opcodes.lload_0:
+      case Opcodes.fload_0:
+      case Opcodes.dload_0:
+      case Opcodes.aload_0:
+        return localNames[0] ?? 'var0';
+      case Opcodes.iload_1:
+      case Opcodes.lload_1:
+      case Opcodes.fload_1:
+      case Opcodes.dload_1:
+      case Opcodes.aload_1:
+        return localNames[1] ?? 'var1';
+      case Opcodes.iload_2:
+      case Opcodes.lload_2:
+      case Opcodes.fload_2:
+      case Opcodes.dload_2:
+      case Opcodes.aload_2:
+        return localNames[2] ?? 'var2';
+      case Opcodes.iload_3:
+      case Opcodes.lload_3:
+      case Opcodes.fload_3:
+      case Opcodes.dload_3:
+      case Opcodes.aload_3:
+        return localNames[3] ?? 'var3';
+      default:
+        return null;
+    }
+  }
+
+  /// 返回 ldc 指令加载的常量值的源码表示。
 
   /// 尝试把 Java 21 的 pattern switch 状态机还原成可读的 switch 表达式。
   /// 这只是一个启发式优化，针对 `invokedynamic typeSwitch` 生成的典型字节码。

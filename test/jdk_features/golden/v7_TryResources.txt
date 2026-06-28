@@ -8,14 +8,14 @@ public class v7_TryResources {
     public v7_TryResources() {
     }
     public String readFirst(String p0) throws IOException {
-        BufferedReader p1 = new BufferedReader(new FileReader(p0));
+        BufferedReader p2 = new BufferedReader(new FileReader(p0));
         try {
-            String p2 = p1.readLine();
-            p1.close();
-            return p2;
+            String p3 = p2.readLine();
+            p2.close();
+            return p3;
         } catch (Throwable e) {
             try {
-                p1.close();
+                p2.close();
             } catch (Throwable e) {
                 e.addSuppressed(e);
             }
@@ -37,21 +37,21 @@ public class v7_TryResources {
         }    }
     public String multiCatch(String p0) {
         try {
-            int p1 = Integer.parseInt(p0);
-            return new StringBuilder().append("int:").append(p1).toString();
+            int p2 = Integer.parseInt(p0);
+            return new StringBuilder().append("int:").append(p2).toString();
         } catch (NumberFormatException | IllegalStateException _) {
             return "bad";
         }
     }
     public List<String> diamond() {
-        ArrayList p0 = new ArrayList();
-        p0.add("a");
-        return p0;
+        ArrayList p1 = new ArrayList();
+        p1.add("a");
+        return p1;
     }
     public int literals() {
-        int p0 = 1000000;
-        int p1 = 10;
-        long p2 = 255L;
-        return ((l2i(p2)) + (p1 + p0));
+        int p1 = 1000000;
+        int p2 = 10;
+        long p3 = 255L;
+        return (((int) (p3)) + (p2 + p1));
     }
 }
