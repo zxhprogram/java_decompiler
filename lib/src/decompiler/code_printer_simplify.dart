@@ -541,7 +541,9 @@ extension on CodePrinter {
         final varName = m.group(1)!;
         // 查找下一非空行是否为 `return $varName;`
         var j = i + 1;
-        while (j < lines.length && lines[j].trim().isEmpty) j++;
+        while (j < lines.length && lines[j].trim().isEmpty) {
+          j++;
+        }
         if (j < lines.length && lines[j].trim() == 'return $varName;') {
           i = j; // 跳过两行
           continue;
@@ -569,7 +571,9 @@ extension on CodePrinter {
         final expr = m.group(2)!;
         // 查找下一非空行是否为 `return $varName;`
         var j = i + 1;
-        while (j < lines.length && lines[j].trim().isEmpty) j++;
+        while (j < lines.length && lines[j].trim().isEmpty) {
+          j++;
+        }
         if (j < lines.length && lines[j].trim() == 'return $varName;') {
           // 保留原缩进
           final lead = lines[i].substring(0, lines[i].indexOf(trimmed));

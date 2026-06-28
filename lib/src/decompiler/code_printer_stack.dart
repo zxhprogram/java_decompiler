@@ -588,7 +588,7 @@ extension on CodePrinter {
               Opcodes.i2b ||
               Opcodes.i2c ||
               Opcodes.i2s:
-          final _castType = switch (i.opcode) {
+          final castType = switch (i.opcode) {
             Opcodes.i2l => 'long',
             Opcodes.i2f => 'float',
             Opcodes.i2d => 'double',
@@ -606,7 +606,7 @@ extension on CodePrinter {
             Opcodes.i2s => 'short',
             _ => 'int'
           };
-          push('((${_castType}) (${pop()}))');
+          push('(($castType) (${pop()}))');
         case Opcodes.lcmp ||
               Opcodes.fcmpl ||
               Opcodes.fcmpg ||
@@ -1852,14 +1852,14 @@ extension on CodePrinter {
     if (size == null || size < 0 || size > 16) return (null, startIdx);
     var i = startIdx + 1;
     // 下一条必须是 dup
-    if (i >= ins.length || ins[i].opcode != Opcodes.dup)
+    if (i >= ins.length || ins[i].opcode != Opcodes.dup) {
       return (null, startIdx);
+    }
     i++;
     final elements = <String>[];
     for (var k = 0; k < size; k++) {
       // 期望：iconst_k 或 bipush/ldc k
       final idxInstr = ins[i];
-      if (idxInstr == null) return (null, startIdx);
       final idxOk = switch (idxInstr.opcode) {
         Opcodes.iconst_m1 => k == -1,
         Opcodes.iconst_0 => k == 0,

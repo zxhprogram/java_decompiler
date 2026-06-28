@@ -660,7 +660,7 @@ extension on CodePrinter {
             }
           }
           if (literal != null && ordinal != null) {
-            ordToString[ordinal!] = literal!;
+            ordToString[ordinal] = literal;
           }
         }
 
@@ -673,7 +673,7 @@ extension on CodePrinter {
         // 在 merge label 之后找第二级 switch（on ordVar）
         int? secondSwitchLine;
         final secondSwitchRe =
-            RegExp(r'^ +switch \(' + RegExp.escape(ordVar!) + r'\) \{$');
+            RegExp(r'^ +switch \(' + RegExp.escape(ordVar) + r'\) \{$');
         for (var k = mergePos + 1; k < lines.length; k++) {
           if (secondSwitchRe.hasMatch(lines[k])) {
             secondSwitchLine = k;
@@ -1059,7 +1059,7 @@ extension on CodePrinter {
 
     // 简化 guard 中的比较运算符（如 `(a <=> b) > 0` → `a > b`）
     if (guard != null) {
-      guard = _simplifyGuardComparison(guard!);
+      guard = _simplifyGuardComparison(guard);
     }
 
     final guardPart = guard != null ? ' when $guard' : '';
@@ -1068,15 +1068,15 @@ extension on CodePrinter {
     // 尝试构造 record 模式：若 resultExpr 中只引用了 patternVar 的访问器调用
     // （如 p3.x()、p3.y()），且该类型是 record，则生成 `Type(x, y)` 形式。
     final recordPattern = _tryBuildRecordPattern(
-      patternType!,
-      patternVar!,
+      patternType,
+      patternVar,
       resultExpr,
       aliasMap,
     );
     if (recordPattern != null && guard == null) {
       // 将 resultExpr 中的 patternVar.accessor() 替换为组件名
       var replacedExpr = resultExpr;
-      final components = _lookupRecordComponents(patternType!)!;
+      final components = _lookupRecordComponents(patternType)!;
       for (final comp in components) {
         replacedExpr = replacedExpr.replaceAll(
           '$patternVar.${comp.name}()',
@@ -1215,17 +1215,14 @@ extension on CodePrinter {
     } else {
       // 模式 b：if 块内以 `goto label_end;` 结束，if 后面是 `state=N; goto switchLabel; label_end: return ...`
       // 验证 if 块内有 goto
-      final ifBlock = block.sublist(instanceofLineIdx + 1, ifCloseLineIdx ?? 0);
-      String? endLabel;
+      final ifBlock = block.sublist(instanceofLineIdx + 1, ifCloseLineIdx);
       for (final l in ifBlock) {
         final m = gotoRe.firstMatch(l);
-        if (m != null) {
-          endLabel = m.group(1);
-        }
+        if (m != null) {}
       }
       // if 之后到 return 之前应有 `state=N; goto switchLabel;`
       int? foundRetryEnd;
-      for (var i = (ifCloseLineIdx ?? 0) + 1; i < block.length; i++) {
+      for (var i = (ifCloseLineIdx) + 1; i < block.length; i++) {
         final t = block[i].trim();
         if (t.isEmpty) continue;
         if (t.contains('goto $switchLabel;')) {

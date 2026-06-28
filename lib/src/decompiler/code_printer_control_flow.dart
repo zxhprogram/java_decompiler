@@ -701,7 +701,6 @@ extension on CodePrinter {
     var lines = source.split('\n');
     final openIfRe = RegExp(r'^( {8,})if \((.+)\) \{$');
     final labelRe = RegExp(r'^ {6,}(label_\d+):$');
-    final gotoAnyRe = RegExp(r'goto (label_\d+);');
 
     bool changed;
     do {
@@ -819,7 +818,7 @@ extension on CodePrinter {
           final cond = openIfRe.firstMatch(lines[ifLine])!.group(2)!;
           final body = lines.sublist(ifLine + 1, gotoLine);
           if (ci == 0) {
-            newLines.add('$indent' + 'if ($cond) {');
+            newLines.add('$indent' 'if ($cond) {');
           } else {
             newLines.add('$indent} else if ($cond) {');
           }
