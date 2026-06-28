@@ -59,19 +59,17 @@ class ClassFileParser {
     final attributes = AttributeParser(_reader, pool).parseAttributes();
     if (T == FieldInfo) {
       return FieldInfo(
-            accessFlags: accessFlags,
-            nameIndex: nameIndex,
-            descriptorIndex: descriptorIndex,
-            attributes: attributes,
-          )
-          as T;
+        accessFlags: accessFlags,
+        nameIndex: nameIndex,
+        descriptorIndex: descriptorIndex,
+        attributes: attributes,
+      ) as T;
     }
     return MethodInfo(
-          accessFlags: accessFlags,
-          nameIndex: nameIndex,
-          descriptorIndex: descriptorIndex,
-          attributes: attributes,
-        )
-        as T;
+      accessFlags: accessFlags,
+      nameIndex: nameIndex,
+      descriptorIndex: descriptorIndex,
+      attributes: attributes,
+    ) as T;
   }
 }
