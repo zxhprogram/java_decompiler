@@ -849,7 +849,18 @@ extension on CodePrinter {
         l.contains('instanceof') ||
         (l.contains('if (') && l.contains(') {')) ||
         l.contains('} else {'));
-    if (hasComplexFlow) return null;
+    if (hasComplexFlow) {
+      // 尝试处理嵌套 record 模式（case 块含 instanceof 用于嵌套 record 提取）
+      final nested = _tryBuildNestedRecordCase(
+        caseValue,
+        block,
+        selectorVar,
+        stateVar,
+        switchLabel,
+        isDefault: isDefault,
+      );
+      return nested;
+    }
 
     // 找到结果表达式：块中最后一个 `return expr;` 或 `throw expr;`
     String? resultExpr;
@@ -1050,6 +1061,326 @@ extension on CodePrinter {
     return (
       isExpr: true,
       body: 'case $simpleType $patternVar$guardPart -> $resultExpr;',
+    );
+  }
+
+  /// 尝试处理嵌套 record 模式的 case 块。
+  ///
+  /// 典型字节码模式（源码 `case Colored(Point(int x, int y), String color) -> ...`）：
+  /// ```
+  /// Colored p4 = (Colored) selector;
+  /// Point p9 = p4.p();              // 嵌套 record 组件
+  /// if (p9 instanceof Point) {      // 嵌套 record 检查
+  ///     Point p5 = p9;              // 别名
+  ///     String p9 = p4.color();     // 其他组件（槽位复用）
+  ///     ... 提取嵌套组件 x, y ...
+  /// } else {
+  ///     state = N; goto switchLabel; // 失败重试
+  /// }
+  /// return resultExpr;
+  /// ```
+  /// 返回结构化的 `case Outer(Inner(...), comp) -> expr;` 或 null。
+  ({bool isExpr, String body})? _tryBuildNestedRecordCase(
+    int? caseValue,
+    List<String> block,
+    String selectorVar,
+    String stateVar,
+    String? switchLabel, {
+    bool isDefault = false,
+  }) {
+    if (isDefault || caseValue == null || caseValue < 0) return null;
+    if (switchLabel == null) return null;
+
+    // 1. 找到外层 cast 行：`Outer pN = ((Outer) selector);`
+    final castRe = RegExp(r'^        (\S+(?:<[^>]+>)?) (\w+) = \(\(\1\) ' +
+        RegExp.escape(selectorVar) +
+        r'\);$');
+    String? outerType;
+    String? outerVar;
+    int? castLineIdx;
+    for (var i = 0; i < block.length; i++) {
+      final m = castRe.firstMatch(block[i]);
+      if (m != null) {
+        outerType = m.group(1);
+        outerVar = m.group(2);
+        castLineIdx = i;
+        break;
+      }
+    }
+    if (outerType == null || outerVar == null || castLineIdx == null) {
+      return null;
+    }
+
+    // 2. 找到 instanceof 检查：`if ((pN instanceof Type)) {`
+    //    pN 是 outerVar 的某个组件（通过 accessor 调用获得）
+    final instanceofRe = RegExp(r'^ *if \(\((\w+) instanceof (\S+)\)\) \{$');
+    int? instanceofLineIdx;
+    String? nestedVar; // 被检查的变量（如 p9）
+    String? nestedType; // 嵌套 record 类型（如 Point）
+    for (var i = castLineIdx + 1; i < block.length; i++) {
+      final m = instanceofRe.firstMatch(block[i]);
+      if (m != null) {
+        nestedVar = m.group(1);
+        nestedType = m.group(2);
+        instanceofLineIdx = i;
+        break;
+      }
+    }
+    if (instanceofLineIdx == null || nestedVar == null || nestedType == null) {
+      return null;
+    }
+    final nestedTypeSimple = _simplifyTypeName(nestedType);
+
+    // 3. 找到 if 块的结束（`}`）。
+    //    javac 生成的结构可能是：
+    //    a) `if (instanceof) { ... } else { state=N; goto switch; }` （旧模式）
+    //    b) `if (instanceof) { ... goto label_end; } state=N; goto switch; label_end: ...` （新模式）
+    int? ifCloseLineIdx;
+    for (var i = instanceofLineIdx + 1; i < block.length; i++) {
+      if (block[i].trim() == '}') {
+        ifCloseLineIdx = i;
+        break;
+      }
+    }
+    if (ifCloseLineIdx == null) {
+      return null;
+    }
+
+    // 判断是哪种模式
+    // 模式 a：if 后面紧跟 ` else {`
+    bool isElseMode = ifCloseLineIdx + 1 < block.length &&
+        block[ifCloseLineIdx].trim() == '}' &&
+        block[ifCloseLineIdx + 1].trim() == '} else {';
+
+    int? elseLineIdx;
+    int? elseCloseLineIdx;
+    if (isElseMode) {
+      elseLineIdx = ifCloseLineIdx + 1;
+      for (var i = elseLineIdx + 1; i < block.length; i++) {
+        if (block[i].trim() == '}') {
+          elseCloseLineIdx = i;
+          break;
+        }
+      }
+      if (elseCloseLineIdx == null) return null;
+    }
+
+    // 4. 验证重试部分
+    final gotoRe = RegExp(r'^ *goto (label_\d+);$');
+    final labelDefRe = RegExp(r'^ *(label_\d+):$');
+    bool isRetry = false;
+    int retryEndLine; // 重试部分结束行（不含）
+    if (isElseMode) {
+      // else 块内：`state = N; goto switchLabel;`
+      final elseBlock =
+          block.sublist((elseLineIdx ?? 0) + 1, elseCloseLineIdx ?? 0);
+      for (final l in elseBlock) {
+        if (l.contains('goto $switchLabel;')) {
+          isRetry = true;
+          break;
+        }
+      }
+      retryEndLine = (elseCloseLineIdx ?? 0) + 1;
+    } else {
+      // 模式 b：if 块内以 `goto label_end;` 结束，if 后面是 `state=N; goto switchLabel; label_end: return ...`
+      // 验证 if 块内有 goto
+      final ifBlock = block.sublist(instanceofLineIdx + 1, ifCloseLineIdx ?? 0);
+      String? endLabel;
+      for (final l in ifBlock) {
+        final m = gotoRe.firstMatch(l);
+        if (m != null) {
+          endLabel = m.group(1);
+        }
+      }
+      // if 之后到 return 之前应有 `state=N; goto switchLabel;`
+      int? foundRetryEnd;
+      for (var i = (ifCloseLineIdx ?? 0) + 1; i < block.length; i++) {
+        final t = block[i].trim();
+        if (t.isEmpty) continue;
+        if (t.contains('goto $switchLabel;')) {
+          isRetry = true;
+        }
+        final lm = labelDefRe.firstMatch(block[i]);
+        if (lm != null) {
+          foundRetryEnd = i + 1;
+          break;
+        }
+        if (block[i].startsWith('        return ') ||
+            block[i].startsWith('        throw ')) {
+          foundRetryEnd = i;
+          break;
+        }
+      }
+      if (!isRetry) {
+        return null;
+      }
+      if (foundRetryEnd == null) {
+        return null;
+      }
+      retryEndLine = foundRetryEnd;
+    }
+
+    // 5. 收集 if 块内的变量赋值，建立变量到组件的映射
+    final ifBlockEnd = isElseMode ? elseLineIdx! : ifCloseLineIdx;
+    final ifBlock = block.sublist(instanceofLineIdx + 1, ifBlockEnd);
+    // 跟踪每个变量代表的"语义"：
+    // - 'outer.ACCESSOR' 表示外层 record 的某个组件
+    // - 'nested.ACCESSOR' 表示嵌套 record 的某个组件
+    // - 'nested' 表示嵌套 record 本身
+    final varSemantics = <String, String>{};
+    // nestedVar 在 if 之前由 `outerVar.accessor()` 赋值
+    // 查找这个赋值
+    final nestedAssignRe = RegExp(r'^ *(?:\S+(?:<[^>]+>)? )?(\w+) = ' +
+        RegExp.escape(outerVar) +
+        r'\.(\w+)\(\);$');
+    for (var i = castLineIdx + 1; i < instanceofLineIdx; i++) {
+      final m = nestedAssignRe.firstMatch(block[i]);
+      if (m != null && m.group(1) == nestedVar) {
+        varSemantics[nestedVar] = 'outer.${m.group(2)}';
+        break;
+      }
+    }
+    if (!varSemantics.containsKey(nestedVar)) return null;
+
+    // 处理 if 块内的赋值
+    // 通用组件访问：`Type pN = src.method();`（外层或嵌套）
+    final nestedCompRe =
+        RegExp(r'^ *(?:\S+(?:<[^>]+>)? )?(\w+) = (\w+)\.(\w+)\(\);$');
+    // 简单赋值/别名：`pN = pM;`（槽位复用）
+    final simpleAssignRe = RegExp(r'^ *(?:\S+(?:<[^>]+>)? )?(\w+) = (\w+);$');
+
+    // 顺序处理 if 块内的赋值（处理槽位复用：同一变量可能被多次赋值）
+    // 关键：当 `p6 = p9` 时，p6 获得 p9 当前的语义；之后 p9 被重新赋值不影响 p6
+    // nestedVar 初始语义是 'outer.COMPONENT'（外层 record 的嵌套 record 组件）
+    // 当 `var = nestedVar` 时，若 nestedVar 仍指向嵌套 record（语义为 'outer.组件名'），
+    // 则 var 成为嵌套 record 的别名（'nested'）；否则按普通别名处理。
+    final nestedComponentName =
+        varSemantics[nestedVar]!.substring('outer.'.length);
+    for (final l in ifBlock) {
+      // 通用组件访问：`Type pN = src.method();`
+      // 根据 src 的语义判断是外层还是嵌套组件访问
+      final ncm = nestedCompRe.firstMatch(l);
+      if (ncm != null) {
+        final v = ncm.group(1)!;
+        final src = ncm.group(2)!;
+        final acc = ncm.group(3)!;
+        if (src == outerVar) {
+          // 外层组件访问
+          varSemantics[v] = 'outer.$acc';
+        } else if (varSemantics[src] == 'nested') {
+          // 嵌套组件访问
+          varSemantics[v] = 'nested.$acc';
+        }
+        continue;
+      }
+      // 简单赋值：`pN = pM;`
+      final sam = simpleAssignRe.firstMatch(l);
+      if (sam != null) {
+        final v = sam.group(1)!;
+        final src = sam.group(2)!;
+        // 特殊处理：`var = nestedVar` 且 nestedVar 仍指向嵌套 record
+        if (src == nestedVar &&
+            varSemantics[nestedVar] == 'outer.$nestedComponentName') {
+          varSemantics[v] = 'nested';
+        } else if (varSemantics[src] != null) {
+          varSemantics[v] = varSemantics[src]!;
+        }
+      }
+    }
+
+    // 6. 找到结果表达式（重试部分之后的 return/throw）
+    String? resultExpr;
+    for (var i = retryEndLine; i < block.length; i++) {
+      final m = RegExp(r'^        (return|throw) (.+);$').firstMatch(block[i]);
+      if (m != null) {
+        resultExpr = m.group(1) == 'throw' ? 'throw ${m.group(2)}' : m.group(2);
+        break;
+      }
+    }
+    if (resultExpr == null) {
+      return null;
+    }
+
+    // 清理 String.valueOf 包装
+    resultExpr = resultExpr.replaceAllMapped(
+        RegExp(r'(?:java\.lang\.)?String\.valueOf\(([^)]+)\)'),
+        (m) => m.group(1)!);
+
+    // 7. 查找外层和嵌套 record 的组件列表
+    final outerComponents = _lookupRecordComponents(outerType);
+    final nestedComponents = _lookupRecordComponents(nestedType);
+    if (outerComponents == null || nestedComponents == null) return null;
+
+    // 8. 将 resultExpr 中的变量替换为组件名
+    // 收集结果表达式中使用的变量
+    final usedVars = <String>{};
+    for (final entry in varSemantics.entries) {
+      if (RegExp(r'\b' + RegExp.escape(entry.key) + r'\b')
+          .hasMatch(resultExpr)) {
+        usedVars.add(entry.key);
+      }
+    }
+
+    // 替换变量为组件名
+    var replacedExpr = resultExpr;
+    final usedOuterComps = <String>{};
+    final usedNestedComps = <String>{};
+    for (final v in usedVars) {
+      final sem = varSemantics[v];
+      if (sem == null) continue;
+      if (sem.startsWith('outer.')) {
+        final comp = sem.substring('outer.'.length);
+        usedOuterComps.add(comp);
+        replacedExpr = replacedExpr.replaceAll(
+          RegExp(r'\b' + RegExp.escape(v) + r'\b'),
+          comp,
+        );
+      } else if (sem.startsWith('nested.')) {
+        final comp = sem.substring('nested.'.length);
+        usedNestedComps.add(comp);
+        replacedExpr = replacedExpr.replaceAll(
+          RegExp(r'\b' + RegExp.escape(v) + r'\b'),
+          comp,
+        );
+      }
+    }
+
+    // 9. 构造嵌套 record 模式
+    // 外层模式：Outer(nestedPattern, comp1, comp2, ...)
+    // 嵌套模式：Inner(usedNestedComps...)
+    // 简化类型名
+    final outerTypeSimple = _simplifyTypeName(outerType);
+
+    // 构造嵌套 record 模式：`Inner(c1, c2)` 或 `Inner(Type c1, Type c2)`
+    // 仅使用在结果表达式中出现的组件
+    final nestedParts = <String>[];
+    for (final comp in nestedComponents) {
+      if (usedNestedComps.contains(comp.name)) {
+        nestedParts.add('${comp.type} ${comp.name}');
+      }
+    }
+    if (nestedParts.isEmpty) return null;
+    final nestedPattern = '$nestedTypeSimple(${nestedParts.join(', ')})';
+
+    // 构造外层 record 模式：按组件顺序，嵌套位置用 nestedPattern，其他用组件名或 _
+    final outerParts = <String>[];
+    // 找到嵌套 record 对应的外层组件名
+    // 使用处理前的 nestedComponentName（nestedVar 可能已被重新赋值）
+    final nestedOuterComp = nestedComponentName;
+    for (final comp in outerComponents) {
+      if (comp.name == nestedOuterComp) {
+        outerParts.add(nestedPattern);
+      } else if (usedOuterComps.contains(comp.name)) {
+        outerParts.add('${comp.type} ${comp.name}');
+      } else {
+        outerParts.add('_');
+      }
+    }
+    final outerPattern = '$outerTypeSimple(${outerParts.join(', ')})';
+
+    return (
+      isExpr: true,
+      body: 'case $outerPattern -> $replacedExpr;',
     );
   }
 
