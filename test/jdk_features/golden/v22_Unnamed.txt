@@ -22,35 +22,12 @@ public class v22_Unnamed {
         return p2;
     }
     public String describe(Object p0) {
-
-        Object p2 = p0;
-        int p3 = 0;
-      label_4:
-        switch (invokedynamic typeSwitch(p2, p3)) {
-            case -1: goto label_91;
-            case 0: goto label_36;
-            case 1: goto label_86;
-            default: goto label_96;
-        }
-      label_36:
-        v22_Unnamed$Point p4 = ((v22_Unnamed$Point) p2);
-        int p6 = p4.x();
-        int p7 = p6;
-
-        int p5 = p6;
-        p6 = p4.y();
-        goto label_76;
-
-        p3 = 1;
-        goto label_4;
-      label_76:
-        return "x=" + p5;
-      label_86:
-        return "an int";
-      label_91:
-        return "null";
-      label_96:
-        return "other";
+        return switch (p0) {
+            case v22_Unnamed$Point(int x, _) -> "x=" + x;
+            case Integer _ -> "an int";
+            case null -> "null";
+            default -> "other";
+        };
 
     }
     public long lambdaIgnore(Stream p0) {

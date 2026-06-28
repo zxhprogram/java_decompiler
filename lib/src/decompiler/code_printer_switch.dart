@@ -242,6 +242,8 @@ extension on CodePrinter {
     }
 
     // 5. 逐个处理块，生成 case 子句
+    // 提取 typeSwitch 的 case 值到类型名的映射（用于未命名模式 `case Type _`）
+    final typeSwitchCases = _lookupTypeSwitchCases();
     final caseLines = <({bool isExpr, String body})>[];
     for (var ci = 0; ci < sortedCases.length; ci++) {
       final start = sortedBlockStarts[ci];
@@ -263,6 +265,7 @@ extension on CodePrinter {
         sel,
         st,
         swLabel,
+        typeSwitchCases: typeSwitchCases,
       );
       // 若任一 case 块解析失败，放弃结构化（避免生成不完整的 switch）
       if (caseLine == null) return source;
@@ -840,6 +843,7 @@ extension on CodePrinter {
     String stateVar,
     String? switchLabel, {
     bool isDefault = false,
+    Map<int, String>? typeSwitchCases,
   }) {
     if (block.isEmpty) return null;
 
@@ -929,6 +933,19 @@ extension on CodePrinter {
       }
     }
     if (patternVar == null || patternType == null || castLine == null) {
+      // 未命名类型模式：`case Type _ -> expr;`
+      // 字节码中没有 cast 行（变量未绑定），通过 typeSwitch 的 case 值查找类型
+      if (caseValue != null &&
+          caseValue >= 0 &&
+          typeSwitchCases != null &&
+          typeSwitchCases.containsKey(caseValue)) {
+        final typeName = typeSwitchCases[caseValue]!;
+        final simpleTypeName = _simplifyTypeName(typeName);
+        return (
+          isExpr: true,
+          body: 'case $simpleTypeName _ -> $resultExpr;',
+        );
+      }
       return null;
     }
     final castLineIdx = castLine;
@@ -1384,9 +1401,10 @@ extension on CodePrinter {
     );
   }
 
-  /// 尝试构造 record 模式 `Type(int x, int y)`。
-  /// 仅当 patternType 是 record 且其所有组件都在 resultExpr 中通过
-  /// `patternVar.accessor()` 形式被引用时才返回 `(int x, int y)`，否则返回 null。
+  /// 尝试构造 record 模式 `Type(int x, int y)` 或 `Type(int x, _)`。
+  /// 当 patternType 是 record 且 resultExpr 中通过 `patternVar.accessor()` 形式
+  /// 引用了部分或全部组件时返回模式字符串，否则返回 null。
+  /// 未引用的组件用 `_`（未命名模式）表示。
   String? _tryBuildRecordPattern(
     String patternType,
     String patternVar,
@@ -1397,7 +1415,7 @@ extension on CodePrinter {
     final components = _lookupRecordComponents(patternType);
     if (components == null || components.isEmpty) return null;
 
-    // 检查 resultExpr 中是否引用了 patternVar 的所有组件访问器
+    // 检查 resultExpr 中引用了 patternVar 的哪些组件访问器
     final usedAccessors = <String>{};
     for (final comp in components) {
       final accessorCall = '$patternVar.${comp.name}()';
@@ -1405,12 +1423,74 @@ extension on CodePrinter {
         usedAccessors.add(comp.name);
       }
     }
-    // 必须使用所有组件才能生成 record 模式
-    if (usedAccessors.length != components.length) return null;
+    // 至少使用一个组件才能生成 record 模式
+    if (usedAccessors.isEmpty) return null;
 
-    // 生成 `(Type1 comp1, Type2 comp2)` 形式
-    final parts = components.map((c) => '${c.type} ${c.name}').join(', ');
+    // 检查 resultExpr 中是否还有 patternVar 的其他引用（非 accessor 调用）
+    // 如 `p4.toString()` 或裸 `p4`，若有则不能生成 record 模式
+    final patternVarRefRe = RegExp(r'\b' + RegExp.escape(patternVar) + r'\b');
+    // 移除所有 accessor 调用后检查是否还有 patternVar 引用
+    final exprWithoutAccessors = resultExpr.replaceAll(
+        RegExp(RegExp.escape(patternVar) + r'\.\w+\(\)'), '');
+    if (patternVarRefRe.hasMatch(exprWithoutAccessors)) return null;
+
+    // 生成 `(Type1 comp1, _)` 形式，未使用的组件用 `_` 表示
+    final parts = components.map((c) {
+      if (usedAccessors.contains(c.name)) {
+        return '${c.type} ${c.name}';
+      }
+      return '_';
+    }).join(', ');
     return '($parts)';
+  }
+
+  /// 从 typeSwitch invokedynamic 的 bootstrap 参数中提取 case 值到类型名的映射。
+  /// typeSwitch 的 bootstrap 参数是一组 CONSTANT_Class_info，case 值 0 对应第一个，
+  /// case 值 1 对应第二个，以此类推。case 值 -1 始终是 null。
+  /// 返回 `Map<int, String>` 或 null（无法解析时）。
+  Map<int, String>? _lookupTypeSwitchCases() {
+    try {
+      BootstrapMethodsAttribute? bmAttr;
+      for (final attr in _cf.attributes) {
+        if (attr is BootstrapMethodsAttribute) {
+          bmAttr = attr;
+          break;
+        }
+      }
+      if (bmAttr == null) return null;
+
+      // 在常量池中查找名为 typeSwitch 的 CpInvokeDynamic 条目
+      for (var i = 1; i < _pool.length; i++) {
+        final e = _pool.get(i);
+        if (e is! CpInvokeDynamic) continue;
+        final nt = _pool.getNameAndType(e.nameAndTypeIndex);
+        final name = _pool.getString(nt.nameIndex);
+        if (name != 'typeSwitch') continue;
+
+        // 获取对应的 bootstrap 方法
+        if (e.bootstrapMethodAttrIndex >= bmAttr.bootstrapMethods.length) {
+          continue;
+        }
+        final bm = bmAttr.bootstrapMethods[e.bootstrapMethodAttrIndex];
+        final result = <int, String>{};
+        // bootstrap 参数通常是 CONSTANT_Class_info，依次对应 case 0, 1, 2, ...
+        for (var k = 0; k < bm.bootstrapArguments.length; k++) {
+          final argIdx = bm.bootstrapArguments[k];
+          final arg = _pool.get(argIdx);
+          if (arg is CpClass) {
+            final internalName = _pool.getString(arg.nameIndex);
+            // 将内部名（如 java/lang/Integer）转为源码名（如 java.lang.Integer）
+            final sourceName =
+                DescriptorParser.internalToSourceName(internalName);
+            result[k] = sourceName;
+          }
+        }
+        return result;
+      }
+      return null;
+    } catch (_) {
+      return null;
+    }
   }
 
   /// 查找 record 类型的组件（名+类型）列表。
