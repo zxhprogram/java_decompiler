@@ -13,6 +13,7 @@ void main(List<String> args) {
     ..addFlag('disassemble', abbr: 'd', negatable: false, help: '仅反汇编字节码')
     ..addFlag('methods', abbr: 'm', negatable: false, help: '输出所有方法签名')
     ..addFlag('fields', abbr: 'f', negatable: false, help: '输出所有字段')
+    ..addFlag('verbose', abbr: 'v', negatable: false, help: '输出 class 文件版本信息')
     ..addFlag('hide-empty-public-ctors',
         negatable: false, help: '省略空的 public 默认构造方法')
     ..addFlag('dump-pool', negatable: false, help: '打印常量池内容');
@@ -36,6 +37,11 @@ void main(List<String> args) {
   final bytes = file.readAsBytesSync();
   final classFile = ClassFileParser(bytes).parse();
 
+  if (results['verbose'] as bool) {
+    _printVersionInfo(classFile);
+    return;
+  }
+
   if (results['dump-pool'] as bool) {
     _dumpPool(classFile);
     return;
@@ -53,6 +59,57 @@ void main(List<String> args) {
       hideEmptyPublicConstructors: results['hide-empty-public-ctors'] as bool,
     ).decompile());
   }
+}
+
+void _printVersionInfo(ClassFile cf) {
+  final major = cf.majorVersion;
+  final minor = cf.minorVersion;
+  final javaVersion = _majorToJavaVersion(major, minor);
+  final className = cf.constantPool.getClassName(cf.thisClass);
+  final preview = minor != 0 && minor != 3
+      ? ' (preview, minor=$minor)'
+      : (minor == 3 ? ' (preview)' : '');
+  print('class: $className');
+  print('major version: $major');
+  print('minor version: $minor');
+  print('java version: $javaVersion$preview');
+}
+
+/// 将 class 文件 major version 映射到 JDK 版本字符串。
+/// 参考: https://javaalmanac.io/wiki/class_file_versions/
+/// 注意: JDK 1.0–1.1 都使用 major=45，需结合 minor 版本区分。
+String _majorToJavaVersion(int major, int minor) {
+  const map = {
+    46: '1.2',
+    47: '1.3',
+    48: '1.4',
+    49: '5',
+    50: '6',
+    51: '7',
+    52: '8',
+    53: '9',
+    54: '10',
+    55: '11',
+    56: '12',
+    57: '13',
+    58: '14',
+    59: '15',
+    60: '16',
+    61: '17',
+    62: '18',
+    63: '19',
+    64: '20',
+    65: '21',
+    66: '22',
+    67: '23',
+    68: '24',
+    69: '25',
+  };
+  if (major == 45) {
+    if (minor >= 3) return '1.1';
+    return '1.0';
+  }
+  return map[major] ?? 'unknown (major=$major)';
 }
 
 void _disassemble(ClassFile cf) {
