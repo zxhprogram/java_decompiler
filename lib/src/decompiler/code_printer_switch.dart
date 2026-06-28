@@ -916,14 +916,28 @@ extension on CodePrinter {
       return (isExpr: true, body: 'case null -> $resultExpr;');
     }
 
-    // 找到模式变量声明：Type v = ((Type) selector);
+    // 找到模式变量声明：
+    //  - 引用类型：`Type v = ((Type) selector);`
+    //  - 原始类型：`prim v = ((Wrapper) selector).xxxValue();`
     final castRe = RegExp(r'^        (\S+(?:<[^>]+>)?) (\w+) = \(\(\1\) ' +
         RegExp.escape(selectorVar) +
         r'\);$');
+    // 原始类型模式：`int v = ((java.lang.Integer) selector).intValue();`
+    final primCastRe = RegExp(
+        r'^        (int|long|float|double|byte|short|char|boolean) (\w+) = \(\((?:java\.lang\.)?(\w+)\) ' +
+            RegExp.escape(selectorVar) +
+            r'\)\.(\w+Value\(\))\;$');
     String? patternType;
     String? patternVar;
     int? castLine;
     for (var i = 0; i < block.length; i++) {
+      final pm = primCastRe.firstMatch(block[i]);
+      if (pm != null) {
+        patternType = pm.group(1);
+        patternVar = pm.group(2);
+        castLine = i;
+        break;
+      }
       final m = castRe.firstMatch(block[i]);
       if (m != null) {
         patternType = m.group(1);
@@ -1447,6 +1461,8 @@ extension on CodePrinter {
   /// 从 typeSwitch invokedynamic 的 bootstrap 参数中提取 case 值到类型名的映射。
   /// typeSwitch 的 bootstrap 参数是一组 CONSTANT_Class_info，case 值 0 对应第一个，
   /// case 值 1 对应第二个，以此类推。case 值 -1 始终是 null。
+  /// 对于原始类型模式（JDK 23+），参数可能是 CONSTANT_Class_info 包装的原始类型描述符
+  /// （如 I、J、F、D）或对应的包装类（Integer、Long、Float、Double）。
   /// 返回 `Map<int, String>` 或 null（无法解析时）。
   Map<int, String>? _lookupTypeSwitchCases() {
     try {
@@ -1479,10 +1495,17 @@ extension on CodePrinter {
           final arg = _pool.get(argIdx);
           if (arg is CpClass) {
             final internalName = _pool.getString(arg.nameIndex);
-            // 将内部名（如 java/lang/Integer）转为源码名（如 java.lang.Integer）
-            final sourceName =
-                DescriptorParser.internalToSourceName(internalName);
-            result[k] = sourceName;
+            // 原始类型描述符（I, J, F, D, etc.）
+            if (internalName.length == 1) {
+              final primitive =
+                  DescriptorParser.parseFieldDescriptor(internalName);
+              result[k] = primitive;
+            } else {
+              // 将内部名（如 java/lang/Integer）转为源码名（如 java.lang.Integer）
+              final sourceName =
+                  DescriptorParser.internalToSourceName(internalName);
+              result[k] = sourceName;
+            }
           }
         }
         return result;

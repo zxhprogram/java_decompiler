@@ -19,6 +19,28 @@ extension on CodePrinter {
       }
     }
 
+    // 1b. 简化原始类型 instanceof 模式（JDK 23+ preview）
+    //     字节码模式：
+    //     ```
+    //     Type pN = selector;
+    //     if (pN == null) goto label_A;
+    //     if ((pN instanceof java.lang.Wrapper) == 0) goto label_A;
+    //     goto label_B;
+    //   label_A:
+    //   label_B:
+    //     if (0 == 0) goto label_C;   // 永真条件，跳过 then 块
+    //     prim p2 = ((java.lang.Wrapper) selector).xxxValue();
+    //     <then body>
+    //   label_C:
+    //     ```
+    //     还原为：
+    //     ```
+    //     if (selector instanceof prim p2) {
+    //       <then body>
+    //     }
+    //     ```
+    lines = _simplifyPrimitiveInstanceofPattern(lines);
+
     // 2. 移除编译器生成的 MatchException catch
     //    模式：`Throwable pN = /*exception*/;` 后跟 `throw new MatchException(pN.toString(), pN);`
     final throwableExRe =
@@ -66,7 +88,117 @@ extension on CodePrinter {
     return result.join('\n');
   }
 
-  /// 简化 instanceof record pattern 反编译结果。
+  /// 简化原始类型 instanceof 模式（JDK 23+ preview）。
+  /// 详见 _preprocessPatternMatching 中的注释。
+  List<String> _simplifyPrimitiveInstanceofPattern(List<String> lines) {
+    // 模式行正则
+    // 变量赋值：`java.lang.Object pN = selector;` 或 `pN = selector;`（复用变量）
+    final assignRe = RegExp(r'^ +(?:java\.lang\.Object )?(\w+) = (\w+);$');
+    final nullCheckRe = RegExp(r'^ +if \((\w+) == null\) goto (label_\d+);$');
+    final instanceofRe = RegExp(
+        r'^ +if \(\((\w+) instanceof java\.lang\.(\w+)\) == 0\) goto (label_\d+);$');
+    final gotoRe = RegExp(r'^ +goto (label_\d+);$');
+    final labelRe = RegExp(r'^ +(label_\d+):$');
+    final constCondRe = RegExp(r'^ +if \(0 == 0\) goto (label_\d+);$');
+    final unboxRe = RegExp(
+        r'^ +(\w+) (\w+) = \(\(java\.lang\.(\w+)\) (\w+)\)\.(\w+Value\(\));$');
+
+    // 包装类 -> 原始类型 映射
+    const wrapperToPrim = {
+      'Integer': 'int',
+      'Long': 'long',
+      'Float': 'float',
+      'Double': 'double',
+      'Byte': 'byte',
+      'Short': 'short',
+      'Character': 'char',
+      'Boolean': 'boolean',
+    };
+
+    for (var i = 0; i < lines.length; i++) {
+      if (i + 7 >= lines.length) break;
+      // 1. Object pN = selector;
+      final am = assignRe.firstMatch(lines[i]);
+      if (am == null) continue;
+      final tmpVar = am.group(1)!;
+      final selector = am.group(2)!;
+
+      // 2. if (pN == null) goto label_A;
+      final ncm = nullCheckRe.firstMatch(lines[i + 1]);
+      if (ncm == null || ncm.group(1) != tmpVar) continue;
+      final failLabel = ncm.group(2)!;
+
+      // 3. if ((pN instanceof java.lang.Wrapper) == 0) goto label_A;
+      final iom = instanceofRe.firstMatch(lines[i + 2]);
+      if (iom == null || iom.group(1) != tmpVar) continue;
+      if (iom.group(3) != failLabel) continue;
+      final wrapperName = iom.group(2)!;
+      final primName = wrapperToPrim[wrapperName];
+      if (primName == null) continue;
+
+      // 4. goto label_B;
+      final gm = gotoRe.firstMatch(lines[i + 3]);
+      if (gm == null) continue;
+      final successLabel = gm.group(1)!;
+
+      // 5. label_A:
+      final lm1 = labelRe.firstMatch(lines[i + 4]);
+      if (lm1 == null || lm1.group(1) != failLabel) continue;
+
+      // 6. label_B:
+      final lm2 = labelRe.firstMatch(lines[i + 5]);
+      if (lm2 == null || lm2.group(1) != successLabel) continue;
+
+      // 7. if (0 == 0) goto label_C;
+      final ccm = constCondRe.firstMatch(lines[i + 6]);
+      if (ccm == null) continue;
+      final endLabel = ccm.group(1)!;
+
+      // 8. prim p2 = ((java.lang.Wrapper) selector).xxxValue();
+      final um = unboxRe.firstMatch(lines[i + 7]);
+      if (um == null || um.group(3) != wrapperName || um.group(4) != selector) {
+        continue;
+      }
+      final primVar = um.group(2)!;
+
+      // 找到 label_C 的位置（then 块结束）
+      int? endLabelIdx;
+      for (var k = i + 8; k < lines.length; k++) {
+        final lm = labelRe.firstMatch(lines[k]);
+        if (lm != null && lm.group(1) == endLabel) {
+          endLabelIdx = k;
+          break;
+        }
+      }
+      if (endLabelIdx == null) continue;
+
+      // 提取 then 块（i+8 到 endLabelIdx-1），去掉 unbox 行（i+7）
+      final thenBlock = <String>[];
+      for (var k = i + 8; k < endLabelIdx; k++) {
+        final line = lines[k];
+        if (line.trim().isEmpty) continue;
+        // 去掉一层缩进
+        if (line.startsWith('        ')) {
+          thenBlock.add('            ${line.substring(8)}');
+        } else {
+          thenBlock.add('            $line');
+        }
+      }
+
+      // 构造新的 if 块：`if (selector instanceof prim primVar) { ... }`
+      final newLines = <String>[];
+      newLines.add('        if ($selector instanceof $primName $primVar) {');
+      newLines.addAll(thenBlock);
+      newLines.add('        }');
+
+      // 替换 i 到 endLabelIdx-1
+      lines.replaceRange(i, endLabelIdx, newLines);
+      i += newLines.length - 1;
+    }
+
+    return lines;
+  }
+
   ///
   /// 输入示例：
   /// ```

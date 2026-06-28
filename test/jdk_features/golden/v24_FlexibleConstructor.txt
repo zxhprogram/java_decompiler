@@ -4,36 +4,14 @@ public class v24_FlexibleConstructor {
     public v24_FlexibleConstructor() {
     }
     public String classify(Object p0) {
-        Object p2 = p0;
-
-        int p3 = 0;
-      label_4:
-        switch (invokedynamic typeSwitch(p2, p3)) {
-            case -1: goto label_130;
-            case 0: goto label_44;
-            case 1: goto label_73;
-            case 2: goto label_92;
-            case 3: goto label_111;
-            default: goto label_135;
-        }
-      label_44:
-        int p4 = ((Integer) p2).intValue();
-        if (p4 > 0) return "positive int: " + p4;
-        p3 = 1;
-        goto label_4;
-      label_73:
-        int p5 = ((Integer) p2).intValue();
-        return "int: " + p5;
-      label_92:
-        long p6 = ((Long) p2).longValue();
-        return "long: " + p6;
-      label_111:
-        double p8 = ((Double) p2).doubleValue();
-        return "double: " + p8;
-      label_130:
-        return "null";
-      label_135:
-        return "other";
+        return switch (p0) {
+            case int p4 when p4 > 0 -> "positive int: " + p4;
+            case int p5 -> "int: " + p5;
+            case long p6 -> "long: " + p6;
+            case double p8 -> "double: " + p8;
+            case null -> "null";
+            default -> "other";
+        };
 
     }
     public List<String> moduleImported() {

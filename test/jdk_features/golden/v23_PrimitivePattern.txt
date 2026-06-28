@@ -2,69 +2,30 @@ public class v23_PrimitivePattern {
     public v23_PrimitivePattern() {
     }
     public String classify(Object p0) {
-        Object p2 = p0;
-        int p3 = 0;
-      label_4:
-        switch (invokedynamic typeSwitch(p2, p3)) {
-            case -1: goto label_153;
-            case 0: goto label_48;
-            case 1: goto label_77;
-            case 2: goto label_96;
-            case 3: goto label_115;
-            case 4: goto label_134;
-            default: goto label_158;
-        }
-      label_48:
-        int p4 = ((Integer) p2).intValue();
-        if (p4 > 0) return "positive int: " + p4;
-        p3 = 1;
-        goto label_4;
-      label_77:
-        int p5 = ((Integer) p2).intValue();
-        return "int: " + p5;
-      label_96:
-        long p6 = ((Long) p2).longValue();
-        return "long: " + p6;
-      label_115:
-        float p8 = ((Float) p2).floatValue();
-        return "float: " + p8;
-      label_134:
-        double p9 = ((Double) p2).doubleValue();
-        return "double: " + p9;
-      label_153:
-        return "null";
-      label_158:
-        return "other";
+        return switch (p0) {
+            case int p4 when p4 > 0 -> "positive int: " + p4;
+            case int p5 -> "int: " + p5;
+            case long p6 -> "long: " + p6;
+            case float p8 -> "float: " + p8;
+            case double p9 -> "double: " + p9;
+            case null -> "null";
+            default -> "other";
+        };
 
     }
     public double toDouble(Object p0) {
-        Object p3 = p0;
-        if (p3 != null) {
-            if ((p3 instanceof Integer)) {
-            } else {
-                }
-            }
-        if (0 != 0) {
-            int p2 = ((Integer) p0).intValue();
+        if (p0 instanceof int p2) {
             return ((double) (p2));
         }
-        Object p4 = p0;
-        if (p4 != null) {
-            if ((p4 instanceof Long)) {
-            } else {
-                }
-            }
-        if (0 != 0) {
-            long p2 = ((Long) p0).longValue();
+
+        if (p0 instanceof long p2) {
             return ((double) (p2));
         }
-        p4 = p0;
-        if (p4 != null) {
-            if ((p4 instanceof Double)) {
-            } else {
-                }
-            }
-        if (0 == 0) return 0.0;
-        return ((Double) p0).doubleValue();
+
+        if (p0 instanceof double p2) {
+            return p2;
+        }
+
+        return 0.0;
     }
 }
